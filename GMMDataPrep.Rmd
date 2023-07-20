@@ -1,0 +1,203 @@
+Install packages
+```{r}
+#install.packages('mixtools')
+#install.packages('mclust')
+
+library('mixtools')
+library('mclust')
+library('dplyr')
+
+
+library(ggplot2)
+library(gridExtra)
+library(stringr)
+library(tidyverse)
+```
+
+
+Pull data
+```{r}
+#Load data
+merged = read.csv('merged.csv',header=TRUE)
+
+# General psychopathology scores for all participants
+X = merged$GENERALB  
+```
+
+
+
+GMM (2 cluster solution determined by Python script)
+```{r}
+gmm <- function(X,modelNames) {
+
+  # Params
+  # X : observations
+  # Returns:
+  # results : list
+  
+  N <- length(X)
+
+  model <- Mclust(X, G=2, modelNames) #G = two clusters
+  
+  means <- model$parameters$mean
+
+  vars <- model$parameters$variance$sigmasq
+
+  pros <- model$parameters$pro
+
+  m1 <- means[1]
+
+  m2 <- means[2]
+
+  #V = Unequal variance assumed between groups
+  #E = Equal variance assumed between groups
+  
+  if (modelNames == 'V') {
+    v1 <- vars[1]
+    v2 <- vars[2]
+  } else if (modelNames == 'E') {
+    v1 <- vars
+    v2 <- vars
+  } else (
+    stop('Only prepared to handle "E" or "V" for `variance`')
+  )
+
+  p1 <- pros[1]
+
+  p2 <- pros[2]
+
+  g1 <- function(x) dnorm(x, m=m1, sd=sqrt(v1)) * p1
+
+  g2 <- function(x) dnorm(x, m=m2, sd=sqrt(v2)) * p2
+
+  g.diff <- function(x) g2(x) - g1(x)
+
+  intersection = NA
+
+  gmm.membership = rep(NA, N)
+
+  tryCatch(
+
+    expr = {
+
+      root <- uniroot(g.diff, interval=c(m1-(2*sqrt(v1)), m2+(2*sqrt(v2))))
+
+      intersection <- root$root
+
+      gmm.membership <- ifelse(model$classification == 2, 1, 0)
+
+    },
+
+    error = function(e) {
+
+      print("Failure finding root!")
+
+    }
+
+  )
+
+ 
+
+  results = list(
+
+    "intersection" = intersection,
+
+    "gmm.membership" = gmm.membership,
+
+    "model" = model,
+
+    "g1" = g1,
+
+    "g2" = g2
+
+  )
+ 
+  return(results)
+
+}
+```
+
+Run GMM on psychopathology data 
+```{r}
+results<-gmm(X, 'V')
+
+```
+
+
+
+```{r}
+
+#pull membership assignments and merge with original dataframe
+membership= as.data.frame(results$gmm.membership)
+colnames(membership)[colnames(membership) == 'results$gmm.membership'] <- 'membership'
+df_membership = cbind(merged,membership)
+
+#Check group assignments
+table(df_membership$membership) # 0 = 3980 1= 5047
+mean(subset(df_membership$GENERALB, df_membership$membership == -1)) #-0.695753
+mean(subset(df_membership$GENERALB, df_membership$membership == 1))  #.6583131
+
+#Reassign controls as -1 as per hydra methodology
+df_membership$membership[df_membership$membership == 0] <- -1
+
+#Write to csv 
+#write.csv(df_membership, file="~/Desktop/HYDRA/HYDRAMembership.csv", row.names=F, quote=F)
+
+```
+
+
+Covariates: Create a covariates dataset with subject IDs, age, and sex
+```{r}
+
+df_AgeSex <- df_membership[c(grep("subnum_char_b|age_b|FEMALE_b",names(df_membership)))]
+df_AgeSex <- df_AgeSex[order(df_AgeSex$subnum_char_b),]
+
+```
+
+
+Brain Features: Create a features dataset with subject ID, cortical thickness and gray matter volume 
+```{r}
+#volume 
+df_vol <- df_membership[c(grep("subnum_char_b|smri_vol_cdk_|smri_vol_scs_",names(df_membership)))]
+df_vol = subset(df_vol, select = -c(smri_vol_cdk_total_b) )
+
+#thickness
+df_ct <- df_membership[c(grep("subnum_char_b|smri_thick_cdk_|membership",names(df_membership)))]
+
+#CT and volume JLF
+df_ctVol <- merge(df_vol,df_ct,by="subnum_char_b", all = TRUE)
+
+#Put ids in ascending order 
+df_ctVol <- df_ctVol[order(df_ctVol$subnum_char_b),]
+
+
+```
+
+
+
+Check Files - it is very important to make sure the subject numbers are aligned for the features dataset and the covariates dataset. 
+```{r}
+
+
+##The covariates and features files MUST have subjects in the same order. Check that this true (correlation between ids should = 1)
+df_corr_ctVol <- cor(df_AgeSex$subnum_char_b,df_ctVol$subnum_char_b) # = 1.00
+
+
+##Check that the variables are in the correct order with the correct n
+nrow(df_AgeSex)
+nrow(df_ctVol)
+
+```
+
+
+
+Save Files
+```{r}
+
+#Save covariates files to use with HYDRA
+write.csv(df_AgeSex, file="~/Desktop/HYDRA/df_AgeSex_GMM.csv", row.names=F, quote=F)
+
+#Save brain features to use with HYDRA
+write.csv(df_ctVol, file="~/Desktop/HYDRA/df_ctVol_GMM.csv", row.names=F, quote=F)
+```
+
