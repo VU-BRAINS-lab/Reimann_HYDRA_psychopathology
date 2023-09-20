@@ -1,0 +1,134 @@
+Script to merge and save hydra clusters with longitudinal data 
+```{r}
+library(dplyr)
+library(readr)
+
+```
+
+
+Load and merge cluster assignments into main dataset 
+```{r}
+data.new <- readRDS("/Users/path/to/data/longitudinal.rds")
+id = c('subnum_char_b','FAMID_b')
+FAM_df <- data.new[id]
+
+#Read in cluster assignments
+data_hydra <- read_tsv('/Users/path/to/data/clustering_assignment.tsv')
+names <- c('subnum_char_b', 'ses','diagnosis', 'Hydra_k1','Hydra_k2','Hydra_k3')
+colnames(data_hydra) <- names
+
+#Merge cluster assignments with longitudinal data
+data.new<- merge(x = data.new, y = data_hydra, by = 'subnum_char_b',all.y = T)
+
+
+```
+
+
+Extract bifactor scores from MPlus - baseline, Year 1 FU and Year 2 FU
+```{r}
+# Define baseline variable data to pull 
+bifactor_names_baseline <- c("cbcl_q01_p_b", "cbcl_q03_p_b", "cbcl_q04_p_b","cbcl_q07_p_b","cbcl_q09_p_b", "cbcl_q10_p_b", "cbcl_q13_p_b", "cbcl_q15_p_b", "cbcl_q16_p_b", "cbcl_q17_p_b", "cbcl_q19_p_b","cbcl_q22_p_b", "cbcl_q23_p_b", "cbcl_q25_p_b", "cbcl_q26_p_b", "cbcl_q27_p_b",  "cbcl_q28_p_b", "cbcl_q30_p_b", "cbcl_q31_p_b", "cbcl_q32_p_b",  "cbcl_q33_p_b", "cbcl_q34_p_b", "cbcl_q35_p_b", "cbcl_q37_p_b", "cbcl_q39_p_b", "cbcl_q41_p_b", "cbcl_q43_p_b", "cbcl_q46_p_b", "cbcl_q50_p_b", "cbcl_q51_p_b", "cbcl_q52_p_b", "cbcl_q56_p_b", "cbcl_q56_p_b", "cbcl_q56_p_b", "cbcl_q56_p_b", "cbcl_q56_p_b", "cbcl_q57_p_b", "cbcl_q61_p_b","cbcl_q62_p_b", "cbcl_q66_p_b", "cbcl_q68_p_b", "cbcl_q71_p_b", "cbcl_q72_p_b", "cbcl_q74_p_b", "cbcl_q75_p_b", "cbcl_q80_p_b", "cbcl_q81_p_b", "cbcl_q82_p_b", "cbcl_q84_p_b", "cbcl_q85_p_b", "cbcl_q86_p_b", "cbcl_q87_p_b", "cbcl_q88_p_b",  "cbcl_q89_p_b", "cbcl_q90_p_b", "cbcl_q94_p_b", "cbcl_q95_p_b", "cbcl_q97_p_b", "cbcl_q102_p_b", "cbcl_q103_p_b", "cbcl_q106_p_b", "cbcl_q109_p_b", "cbcl_q111_p_b", "cbcl_q112_p_b", "ATTEND_b", "DESTROY_b", "GENERALB", "GENERALB_SE", "EXTB", "EXTB_SE", "ADHDB", "ADHDB_SE", "INTB", "INTB_SE", "PSWEIGHT_b", "subnum_char_b", "SITEN_b",
+  "FAMID_b")
+
+
+
+# Read baseline bifactor scores from MPLUS dat file
+bifactor.b<-read.table("/Users/path/to/data/Bifactor_b.dat")
+colnames(bifactor.b)<-bifactor_names_baseline
+factorscores.b <- bifactor.b[c(grep("subnum_char_b|^GENERALB$|^EXTB$|^ADHDB$|^INTB$", names(bifactor.b)))]
+
+
+#MERGE THE FACTOR SCORES WITH EACH RDS FILE 
+baseline_merged <-merge(data.new, factorscores.b, by="subnum_char_b") 
+baseline_merged <- baseline_merged %>%
+  group_by(FAMID_b) %>% sample_n(size = 1)
+baseline_merged <- baseline_merged[,!names(baseline_merged) %in% c("FAMID_b")]
+
+
+
+# Define Year1 variable data to pull
+bifactor_names_y1 <- c("cbcl_q01_p_1", "cbcl_q03_p_1", "cbcl_q04_p_1","cbcl_q07_p_1","cbcl_q09_p_1", "cbcl_q10_p_1", "cbcl_q13_p_1","cbcl_q15_p_1", "cbcl_q16_p_1", "cbcl_q17_p_1", "cbcl_q19_p_1","cbcl_q22_p_1", "cbcl_q23_p_1", "cbcl_q25_p_1", "cbcl_q26_p_1", "cbcl_q27_p_1", "cbcl_q28_p_1", "cbcl_q30_p_1", "cbcl_q31_p_1", "cbcl_q32_p_1",  "cbcl_q33_p_1", "cbcl_q34_p_1", "cbcl_q35_p_1", "cbcl_q37_p_1", "cbcl_q39_p_1", "cbcl_q41_p_1", "cbcl_q43_p_1", "cbcl_q46_p_1", "cbcl_q50_p_1", "cbcl_q51_p_1", "cbcl_q52_p_1", "cbcl_q56_p_1","cbcl_q56_p_1", "cbcl_q56_p_1", "cbcl_q56_p_1", "cbcl_q56_p_1", "cbcl_q57_p_1", "cbcl_q61_p_1","cbcl_q62_p_1", "cbcl_q66_p_1", "cbcl_q68_p_1", "cbcl_q71_p_1", "cbcl_q72_p_1", "cbcl_q74_p_1", "cbcl_q75_p_1", "cbcl_q80_p_1", "cbcl_q81_p_1", "cbcl_q82_p_1", "cbcl_q84_p_1", "cbcl_q85_p_1", "cbcl_q86_p_1", "cbcl_q87_p_1", "cbcl_q88_p_1",  "cbcl_q89_p_1", "cbcl_q90_p_1", "cbcl_q94_p_1", "cbcl_q95_p_1", "cbcl_q97_p_1", "cbcl_q102_p_1", "cbcl_q103_p_1", "cbcl_q106_p_1", "cbcl_q109_p_1", "cbcl_q111_p_1", "cbcl_q112_p_1",  "ATTEND_1", "DESTROY_1", "GENERAL1", "GENERAL1_SE", "EXT1", "EXT1_SE", "ADHD1", "ADHD1_SE", "INT1", "INT1_SE", "PSWEIGHT_b", "subnum_char_b", "SITEN_b", "FAMID_b")
+
+
+
+# read year 1 bifactor scores
+bifactor.y1<-read.table("/Users/path/to/data/Bifactor_y1.dat")
+colnames(bifactor.y1)<-bifactor_names_y1
+factorscores.y1 <- bifactor.y1[c(grep("subnum_char_b|^GENERAL1$|^EXT1$|^ADHD1$|^INT1$", names(bifactor.y1)))]
+
+#MERGE THE FACTOR SCORES WITH EACH RDS FILE
+y1_merged <-merge(FAM_df, factorscores.y1, by="subnum_char_b") 
+y1_merged <- y1_merged %>%
+  group_by(FAMID_b) %>% sample_n(size = 1)
+y1_merged <-y1_merged[,!names(y1_merged) %in% c("FAMID_b")]
+
+
+
+# Define Year2 variable data to pull 
+bifactor_names_y2<-c("cbcl_q01_p_2","cbcl_q03_p_2","cbcl_q04_p_2","cbcl_q07_p_2","cbcl_q09_p_2","cbcl_q10_p_2","cbcl_q13_p_2","cbcl_q15_p_2","cbcl_q16_p_2","cbcl_q17_p_2", "cbcl_q19_p_2","cbcl_q22_p_2", "cbcl_q23_p_2", "cbcl_q25_p_2", "cbcl_q26_p_2", "cbcl_q27_p_2", "cbcl_q28_p_2", "cbcl_q30_p_2", "cbcl_q31_p_2", "cbcl_q32_p_2",  "cbcl_q33_p_2", "cbcl_q34_p_2", "cbcl_q35_p_2", "cbcl_q37_p_2",   "cbcl_q39_p_2", "cbcl_q41_p_2", "cbcl_q43_p_2", "cbcl_q46_p_2", "cbcl_q50_p_2", "cbcl_q51_p_2", "cbcl_q52_p_2", "cbcl_q56_p_2",  "cbcl_q56_p_2", "cbcl_q56_p_2", "cbcl_q56_p_2", "cbcl_q56_p_2", "cbcl_q57_p_2", "cbcl_q61_p_2","cbcl_q62_p_2", "cbcl_q66_p_2",   "cbcl_q68_p_2", "cbcl_q71_p_2", "cbcl_q72_p_2", "cbcl_q74_p_2", "cbcl_q75_p_2", "cbcl_q80_p_2", "cbcl_q81_p_2", "cbcl_q82_p_2",  "cbcl_q84_p_2", "cbcl_q85_p_2", "cbcl_q86_p_2", "cbcl_q87_p_2", "cbcl_q88_p_2",  "cbcl_q89_p_2", "cbcl_q90_p_2", "cbcl_q94_p_2",   "cbcl_q95_p_2", "cbcl_q97_p_2", "cbcl_q102_p_2", "cbcl_q103_p_2", "cbcl_q106_p_2", "cbcl_q109_p_2", "cbcl_q111_p_2", "cbcl_q112_p_2", "ATTEND_2", "DESTROY_2", "GENERAL2", "GENERAL2_SE", "EXT2", "EXT2_SE", "ADHD2", "ADHD2_SE", "INT2", "INT2_SE", "PSWEIGHT_b", "subnum_char_b", "SITEN_b","FAMID_b")
+
+
+
+# read y2 bifactor scores
+bifactor.y2<-read.table("/Users/path/to/data/Bifactor_y2.dat")
+colnames(bifactor.y2)<-bifactor_names_y2
+# extract factors scores
+factorscores.y2 <- bifactor.y2[c(grep("subnum_char_b|^GENERAL2$|^EXT2$|^ADHD2$|^INT2$", names(bifactor.y2)))]
+
+
+#MERGE THE FACTOR SCORES WITH EACH RDS FILE
+y2_merged <-merge(FAM_df, factorscores.y2, by="subnum_char_b") 
+y2_merged <- y2_merged %>%
+  group_by(FAMID_b) %>% sample_n(size = 1)
+y2_merged <-y2_merged[,!names(y2_merged) %in% c("FAMID_b")]
+
+
+#clean up environment
+#rm(list=setdiff(ls(),c("data.new","baseline_merged","y1_merged","y2_merged")))
+
+
+```
+
+
+
+Merge bifactor scores into main dataset 
+```{r}
+# Joining of longitudinal bifactor dataframes
+dataComb = merge(x = baseline_merged, y = y1_merged, by = "subnum_char_b", all.x = TRUE)
+dataComb = merge(x = dataComb, y = y2_merged, by = "subnum_char_b", all.x = TRUE)
+
+
+rm(list=setdiff(ls(),"dataComb"))
+```
+
+
+
+
+Adjust data types
+```{r}
+#Cluster membership: -1 denotes controls, positive integers denote subgroups. We need to change to 0=controls (comparison group in lm analyses), 1=subtype1, 2=subtype2, etc.
+dataComb$Hydra_k1[which(dataComb$Hydra_k1==-1)] <- 0
+dataComb$Hydra_k2[which(dataComb$Hydra_k2==-1)] <- 0
+dataComb$Hydra_k3[which(dataComb$Hydra_k3==-1)] <- 0
+
+#Make the hydra group variables into factors. TD is the comparison group.
+dataComb$Hydra_k1 <- as.factor(dataComb$Hydra_k1)
+dataComb$Hydra_k2 <- as.factor(dataComb$Hydra_k2)
+dataComb$Hydra_k3 <- as.factor(dataComb$Hydra_k3)
+
+```
+
+
+Create a variable that reorders the group variable of interest to make S2 the comparison group. 
+Note: Change based on the results of the clusters (ARI)
+```{r}
+dataComb$Hydra_k2_reordered <- factor(dataComb$Hydra_k2, levels=c("2","1","0"))
+
+```
+
+```{r}
+write.csv(dataComb,"/Users/path/to/data/hydra_subjData.csv")
+saveRDS(dataComb,"/Users/path/to/data/hydra_subjData.rds")
+
+```
+

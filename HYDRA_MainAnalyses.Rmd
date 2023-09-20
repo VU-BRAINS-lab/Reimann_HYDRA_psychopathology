@@ -1,0 +1,3765 @@
+Libraries
+```{r}
+#Load libraries ("plyr" needs to be loaded before "dplyr")
+library(plyr)
+library(mgcv)
+library(dplyr)
+library(varhandle)
+library(psych)
+library(schoolmath)
+library(psychometric)
+library(openxlsx)
+library(lm.beta)
+```
+
+Load data
+```{r}
+
+subjData=readRDS("/Users/path/to/data/hydra_subjData.rds")
+
+# Provide the desired file path.Results will be saved to this later 
+filename <- "/Users/path/to/data/Hydra_StandardizedResults_8.28.23.xlsx" 
+wb <- createWorkbook()
+
+```
+
+
+Create variable that reorders the group variable of interest to make S2 the comparison group
+```{r}
+#Total sample size
+n <- nrow(subjData)
+
+#Reorder the group variable of interest to make S2 the comparison group.
+subjData$Hydra_k2_reordered <- factor(subjData$Hydra_k2, levels=c("2","1","0"))
+levels(subjData$Hydra_k2_reordered) <- list("S2" ="2", "S1" ="1", "TD" ="0")
+
+#convert Hydra_k2 to factor
+subjData$Hydra_k2 <- factor(subjData$Hydra_k2)
+levels(subjData$Hydra_k2) <- list("TD" ="0", "S1" ="1", "S2" ="2")
+
+# Convert variable class types
+subjData$mom_education_b = as.numeric(subjData$mom_education_b)
+subjData$FEMALE_b <- factor(subjData$FEMALE_b)
+subjData$mri_info_deviceserialnumber_b <- as.factor(subjData$mri_info_deviceserialnumber_b)
+
+
+```
+
+################# Examine different descriptive variables in relation to cluster groups ######################
+
+Mom Education
+```{r}
+#Clean up environment if desired
+rm(list=setdiff(ls(),c("subjData","n",'filename','wb')))
+
+##Run model (This is the original model using TD youth as comparison group - produces TD vs S1 and TD vs S2)
+mom_educationLm <- lm(mom_education_b ~ Hydra_k2, data=subjData)
+
+#Look at model summary
+mom_educationLmSumm <- summary(mom_educationLm)
+
+##Pass the results to the anova() function to fit ANOVAs
+#This is your omnibus ANOVA test (tells you if the three groups are significantly different)
+#df1=k-1, df2=n-k 
+mom_educationAnova <- anova(mom_educationLm) 
+
+
+##Run same model with Hydra_k2_reordered to make S2 the comparison group in order to see S1 vs S2 differences in the model.
+mom_educationLm_reordered <- lm(mom_education_b ~ Hydra_k2_reordered, data=subjData)
+#mom_educationLm_reordered_relevel <- lm(mom_education_b ~ relevel(Hydra_k2,ref = 'S2'), data=subjData)
+
+
+#Look at model summary
+mom_educationLmSumm_reordered <- summary(mom_educationLm_reordered)
+
+
+##Pairwise comparisons
+#Pull uncorrected p-values
+mom_education_S1vsTd <- summary(mom_educationLm)$coefficients[2,4]
+mom_education_S2vsTd <- summary(mom_educationLm)$coefficients[3,4]
+mom_education_S1vsS2 <- summary(mom_educationLm_reordered)$coefficients[2,4]
+#
+##Combine the pairwise p values
+mom_education_pairs <- cbind(mom_education_S1vsTd,mom_education_S2vsTd,mom_education_S1vsS2)
+#
+##Convert to data frame
+mom_education_pairs <- as.data.frame(mom_education_pairs)
+#
+##Print original p-values to three decimal places
+mom_education_pairs_round <- round(mom_education_pairs,3)
+
+
+##FDR correction across the three pairwise group comparisons (S1vsTd, S2vsTd, and S1vsS2)
+mom_education_fdr <- p.adjust(mom_education_S1vsTd,method="fdr")
+
+#Print fdr-corrected p-values to three decimal places
+mom_education_fdr_round <- round(mom_education_fdr,3)
+
+
+
+```
+
+Code to create tables - Mom Education 
+```{r}
+
+# Specify file and sheet names
+sheet_name <- "Mom Education"         
+num_models <- 1
+anova_model = mom_educationAnova
+model = mom_educationLm 
+modelSumm = mom_educationLmSumm
+model_reordered = mom_educationLm_reordered
+modelSumm_reordered = mom_educationLmSumm_reordered
+pairwise_p = mom_education_pairs_round
+rnames = 'mom_education'
+
+
+# ANOVA
+Lm_F <- anova_model$`F value`[1]
+Lm_p <- anova_model$`Pr(>F)`[1]
+
+##  confidence intervals
+Lm_rsq_CI <- CI.Rsq(modelSumm$r.squared,n,1,.95)
+Lm_reordered_rsq_CI <- CI.Rsq(modelSumm_reordered$r.squared,n,1,.95)
+
+#Estimate Se T p 
+S1Td_stats <- modelSumm$coefficients[2,]
+S2Td_stats <- modelSumm$coefficients[3,]
+S1S2_stats <- modelSumm_reordered$coefficients[2,]
+
+
+df <- data.frame(F_statistic = numeric(num_models),
+                 Anova_p = numeric(num_models), 
+                 #T1
+                 Est_T1 = numeric(num_models), 
+                 SE_T1 = numeric(num_models), 
+                 t_T1 = numeric(num_models), 
+                 p_T1 = numeric(num_models), 
+                 #T2
+                 Est_T2 = numeric(num_models), 
+                 SE_T2 = numeric(num_models), 
+                 t_T2 = numeric(num_models), 
+                 p_T2 = numeric(num_models),
+                 #12
+                 Est_12 = numeric(num_models), 
+                 SE_12 = numeric(num_models), 
+                 t_12 = numeric(num_models), 
+                 p_12 = numeric(num_models),
+                 R_squared = numeric(num_models), 
+                 LCL = numeric(num_models), 
+                 UCL = numeric(num_models))
+
+#Standardized Betas 
+stBeta = lm.beta(model)
+stBeta_reordered = lm.beta(model_reordered)
+
+for (i in 1:num_models) {
+  df[i, "Est_T1"] <- stBeta$standardized.coefficients[2]
+  df[i, "Est_T2"] <- stBeta$standardized.coefficients[3]
+  df[i, "Est_12"] <- stBeta_reordered$standardized.coefficients[2]
+  df[i, "F_statistic"] <- Lm_F
+  df[i, "Anova_p"] <- Lm_p
+  df[i, "R_squared"] <- Lm_rsq_CI$Rsq
+  df[i, "LCL"] <- Lm_rsq_CI$LCL
+  df[i, "UCL"] <- Lm_rsq_CI$UCL
+  #df[i, "Est_T1"] <- S1Td_stats[1]
+  df[i, "SE_T1"] <- S1Td_stats[2]
+  df[i, "t_T1"] <- S1Td_stats[3]
+  df[i, "p_T1"] <- pairwise_p[1]
+  #df[i, "Est_T2"] <- S2Td_stats[1]
+  df[i, "SE_T2"] <- S2Td_stats[2]
+  df[i, "t_T2"] <- S2Td_stats[3]
+  df[i, "p_T2"] <- pairwise_p[2]
+  #df[i, "Est_12"] <- S1S2_stats[1]
+  df[i, "SE_12"] <- S1S2_stats[2]
+  df[i, "t_12"] <- S1S2_stats[3]
+  df[i, "p_12"] <- pairwise_p[3]
+}
+
+
+## estimates
+rownames(df)<- rnames
+
+# Add a new sheet to the workbook
+addWorksheet(wb, sheetName = sheet_name)
+
+# Write the data frame to the new sheet, including row index names
+writeData(wb, sheet = sheet_name, x= df,row.names = TRUE,col.names = TRUE)
+
+
+```
+
+
+Gender
+```{r}
+rm(list=setdiff(ls(),c("subjData","n",'filename','wb')))
+
+##Run model
+genderLm <- glm(FEMALE_b ~ Hydra_k2, data=subjData, family=binomial)
+
+#Look at model summary
+genderLmSumm <- summary(genderLm)
+
+
+##Pass the results to the anova() function to fit a Chi-square test
+#This is your omnibus Chi-square test (tells you if sex differs by group)
+#df1=k-1, df2=n-k
+genderAnova <- anova(genderLm, test="Chisq")
+
+
+##Run same model with Hydra_k2_reordered to make S2 the comparison group in order to see S1 vs S2 differences in the model.
+genderLm_reordered <- glm(FEMALE_b ~ Hydra_k2_reordered, data=subjData, family=binomial)
+
+#Look at model summary
+genderLmSumm_reordered <- summary(genderLm_reordered)
+
+
+##Pairwise comparisons
+#Pull uncorrected p-values
+gender_S1vsTd <- summary(genderLm)$coefficients[2,4]
+gender_S2vsTd <- summary(genderLm)$coefficients[3,4]
+gender_S1vsS2 <- summary(genderLm_reordered)$coefficients[2,4]
+
+##Combine the pairwise p values
+gender_pairs <- cbind(gender_S1vsTd,gender_S2vsTd,gender_S1vsS2)
+#
+##Convert to data frame
+gender_pairs <- as.data.frame(gender_pairs)
+#
+##Print original p-values to three decimal places
+gender_pairs_round <- round(gender_pairs,3)
+#
+#
+##FDR correction across the three pairwise group comparisons (S1vsTd, S2vsTd, and S1vsS2)
+gender_fdr <- p.adjust(gender_pairs_round,method="fdr")
+
+#Print fdr-corrected p-values to three decimal places
+gender_fdr_round <- round(gender_fdr,3)
+```
+
+
+
+Age
+```{r}
+rm(list=setdiff(ls(),c("subjData","n",'filename','wb')))
+
+##Run model
+ageLm <- lm(age_b ~ Hydra_k2, data=subjData)
+
+#Look at model summary
+ageLmSumm <- summary(ageLm)
+
+
+##Pass the results to the anova() function to fit ANOVAs
+#This is your omnibus ANOVA test (tells you if the three groups are significantly different)
+#df1=k-1, df2=n-k
+ageAnova <- anova(ageLm)
+
+
+##Run same model with Hydra_k2_reordered to make S2 the comparison group in order to see S1 vs S2 differences in the model.
+ageLm_reordered <- lm(age_b ~ Hydra_k2_reordered, data=subjData)
+
+#Look at model summary
+ageLmSumm_reordered <- summary(ageLm_reordered)
+
+
+##Pairwise comparisons
+#Pull uncorrected p-values
+age_S1vsTd <- summary(ageLm)$coefficients[2,4]
+age_S2vsTd <- summary(ageLm)$coefficients[3,4]
+age_S1vsS2 <- summary(ageLm_reordered)$coefficients[2,4]
+#
+##Combine the pairwise p values
+age_pairs <- cbind(age_S1vsTd,age_S2vsTd,age_S1vsS2)
+#
+##Convert to data frame
+age_pairs <- as.data.frame(age_pairs)
+#
+##Print original p-values to three decimal places
+age_pairs_round <- round(age_pairs,3)
+
+
+##FDR correction across the three pairwise group comparisons (S1vsTd, S2vsTd, and S1vsS2)
+#age_fdr <- p.adjust(age_S1vsTd,method="fdr")
+age_fdr <- p.adjust(age_pairs_round,method="fdr")
+
+#Print fdr-corrected p-values to three decimal places
+age_fdr_round <- round(age_fdr,3)
+
+
+```
+
+Code to create tables - Age 
+```{r}
+
+# Specify file and sheet names
+sheet_name <- "Age"         
+num_models <- 1
+anova_model = ageAnova
+model = ageLm 
+modelSumm = ageLmSumm
+model_reordered = ageLm_reordered
+modelSumm_reordered = ageLmSumm_reordered
+pairwise_p = age_fdr_round
+rnames = 'age'
+
+
+# ANOVA
+Lm_F <- anova_model$`F value`[1]
+Lm_p <- anova_model$`Pr(>F)`[1]
+
+## Confidence intevals
+Lm_rsq_CI <- CI.Rsq(modelSumm$r.squared,n,1,.95)
+Lm_reordered_rsq_CI <- CI.Rsq(modelSumm_reordered$r.squared,n,1,.95)
+
+#Estimate Se T p 
+S1Td_stats <- modelSumm$coefficients[2,]
+S2Td_stats <- modelSumm$coefficients[3,]
+S1S2_stats <- modelSumm_reordered$coefficients[2,]
+
+
+
+
+df <- data.frame(F_statistic = numeric(num_models),
+                 Anova_p = numeric(num_models), 
+                 #T1
+                 Est_T1 = numeric(num_models), 
+                 SE_T1 = numeric(num_models), 
+                 t_T1 = numeric(num_models), 
+                 p_T1 = numeric(num_models), 
+                 #T2
+                 Est_T2 = numeric(num_models), 
+                 SE_T2 = numeric(num_models), 
+                 t_T2 = numeric(num_models), 
+                 p_T2 = numeric(num_models),
+                 #12
+                 Est_12 = numeric(num_models), 
+                 SE_12 = numeric(num_models), 
+                 t_12 = numeric(num_models), 
+                 p_12 = numeric(num_models),
+                 R_squared = numeric(num_models), 
+                 LCL = numeric(num_models), 
+                 UCL = numeric(num_models))
+
+
+#Standardize betas
+stBeta = lm.beta(model)
+stBeta_reordered = lm.beta(model_reordered)
+
+for (i in 1:num_models) {
+  df[i, "Est_T1"] <- stBeta$standardized.coefficients[2]
+  df[i, "Est_T2"] <- stBeta$standardized.coefficients[3]
+  df[i, "Est_12"] <- stBeta_reordered$standardized.coefficients[2]
+  df[i, "F_statistic"] <- Lm_F
+  df[i, "Anova_p"] <- Lm_p
+  df[i, "R_squared"] <- Lm_rsq_CI$Rsq
+  df[i, "LCL"] <- Lm_rsq_CI$LCL
+  df[i, "UCL"] <- Lm_rsq_CI$UCL
+  #df[i, "Est_T1"] <- S1Td_stats[1]
+  df[i, "SE_T1"] <- S1Td_stats[2]
+  df[i, "t_T1"] <- S1Td_stats[3]
+  df[i, "p_T1"] <- pairwise_p[1]
+  #df[i, "Est_T2"] <- S2Td_stats[1]
+  df[i, "SE_T2"] <- S2Td_stats[2]
+  df[i, "t_T2"] <- S2Td_stats[3]
+  df[i, "p_T2"] <- pairwise_p[2]
+  #df[i, "Est_12"] <- S1S2_stats[1]
+  df[i, "SE_12"] <- S1S2_stats[2]
+  df[i, "t_12"] <- S1S2_stats[3]
+  df[i, "p_12"] <- pairwise_p[3]
+}
+
+
+
+rownames(df)<- rnames
+
+# Add a new sheet to the workbook
+addWorksheet(wb, sheetName = sheet_name)
+
+# Write the data frame to the new sheet, including row index names
+writeData(wb, sheet = sheet_name, x= df,row.names = TRUE,col.names = TRUE)
+
+```
+
+
+
+############################## Examine PSYCHOPATHOLOGY among clusters #################################
+Note: Covariates include age, gender, and site/scanner model
+
+
+Psychopathology bifactors - baseline
+```{r}
+#Clean up environment if desired
+rm(list=setdiff(ls(),c("subjData","n",'filename','wb')))
+
+#Get bifactor variable names
+bifactors <- c("GENERALB", "EXTB","ADHDB","INTB")
+
+#Run models (all three groups included)
+#TD is the comparison group in Hydra_k2. This model will provide estimates and p-values for TD vs. S1 and TD vs. S2.
+biLm <- lapply(bifactors, function(x) {
+  lm(substitute(i ~ age_b +  FEMALE_b + Hydra_k2 + mri_info_deviceserialnumber_b, list(i = as.name(x))), data=subjData)
+})
+
+#Look at model summaries
+biLmSumm <- lapply(biLm, summary)
+
+
+##Pass the results to the anova() function to fit ANOVAs
+#These are your omnibus ANOVA tests (tells you if the three groups are significantly different)
+biAnova <- lapply(biLm, anova)
+
+#Pull the p-values
+bi_p <- sapply(biAnova, function(v) v$"Pr(>F)"[3])
+
+#Convert to data frame
+bi_p <- as.data.frame(bi_p)
+
+#Add row names for ease of viewing
+rownames(bi_p) <- bifactors
+
+#Print original p-values to three decimal places
+bi_p_round <- round(bi_p,3)
+
+
+##FDR correction across all omnibus anova tests
+#FDR correct p-values
+bi_p_fdr <- p.adjust(bi_p[,1],method="fdr")
+
+#Convert to data frame
+bi_p_fdr <- as.data.frame(bi_p_fdr)
+
+#Print fdr-corrected p-values to three decimal places
+bi_p_fdr_round <- round(bi_p_fdr,3)
+
+#Add names
+biNames <- as.data.frame(bifactors)
+bi_omnibus <- cbind(biNames,bi_p_fdr_round)
+
+#Trim table to only variables that passed FDR correction
+bi_omnibus_signif <- bi_omnibus[bi_p_fdr<0.05,]
+
+
+##Run same model with Hydra_k2_reordered to make S2 the comparison group in order to see S1 vs S2 differences in the model.
+#This model will provide estimates and p-values for S1-S2.
+biLm_reordered <- lapply(bifactors, function(x) {
+  lm(substitute(i ~ age_b + FEMALE_b + Hydra_k2_reordered + mri_info_deviceserialnumber_b, list(i = as.name(x))), data=subjData)
+})
+
+#Look at model summaries
+biLmSumm_reordered <- lapply(biLm_reordered, summary)
+
+
+##Pairwise comparisons
+#Pull uncorrected p-values
+bi_S1vsTd <- sapply(biLm, function(v) summary(v)$coefficients[4,4])
+bi_S2vsTd <- sapply(biLm, function(v) summary(v)$coefficients[5,4])
+bi_S1vsS2 <- sapply(biLm_reordered, function(v) summary(v)$coefficients[4,4])
+
+#Combine the pairwise p values
+bi_pairs <- cbind(bi_S1vsTd,bi_S2vsTd, bi_S1vsS2)
+
+#Convert to data frame
+bi_pairs <- as.data.frame(bi_pairs)
+
+#Add row names for ease of viewing
+rownames(bi_pairs) <- bifactors
+
+#Print original p-values to three decimal places
+bi_pairs_round <- round(bi_pairs,3)
+
+
+##FDR correction across the three pairwise group comparisons (S1vsTd, S2vsTd, and S1vsS2)
+#Create an empty table for the fdr results
+bi_fdrTable<-as.data.frame(matrix(nrow=4,ncol=3))
+colnames(bi_fdrTable)[1]<-"bi_S1vsTd_pfdr"
+colnames(bi_fdrTable)[2]<-"bi_S2vsTd_pfdr"
+colnames(bi_fdrTable)[3]<-"bi_S1vsS2_pfdr"
+
+#FDR correct across rows
+for(i in 1:nrow(bi_pairs)) {
+    row <- bi_pairs[i,]
+    bi_fdrTable[i,] <- p.adjust(bi_pairs[i,],method="fdr")
+}
+
+#Print fdr-corrected p-values to three decimal places
+bi_fdrTable_round <- round(bi_fdrTable,3)
+
+#Add names
+bi_pairwise <- cbind(biNames,bi_fdrTable_round)
+
+
+```
+
+Create Tables - bifactor baseline
+```{r}
+
+# Specify file and sheet names
+sheet_name <- "Bifactor_b"         
+num_models <- length(biLm)
+anova_model = biAnova
+model = biLm 
+modelSumm = biLmSumm
+model_reordered = biLm_reordered
+modelSumm_reordered = biLmSumm_reordered
+pairwise_p = bi_fdrTable_round
+rnames = bifactors
+var = 4 # var = number of variables included in lm model (age, female, bifactors, & site/scanner) 
+
+# ANOVA
+Lm_F <- lapply(anova_model, function(x) {(x$`F value`[3])})
+Lm_p <- lapply(anova_model, function(x) {(x$`Pr(>F)`[3])})
+
+## Confidence intevals
+Lm_rsq_CI <- lapply(modelSumm, function(x) {CI.Rsq(x$r.squared,n,var,.95)})
+
+
+#Estimate Se T p 
+S1Td_stats <- lapply(model, function(v) summary(v)$coefficients[4,])
+S2Td_stats <- lapply(model, function(v) summary(v)$coefficients[5,])
+S1S2_stats <- lapply(model_reordered, function(v) summary(v)$coefficients[4,])
+
+
+df <- data.frame(F_statistic = numeric(num_models),
+                 Anova_p = numeric(num_models), 
+                 #T1
+                 Est_T1 = numeric(num_models), 
+                 SE_T1 = numeric(num_models), 
+                 t_T1 = numeric(num_models), 
+                 p_T1 = numeric(num_models), 
+                 #T2
+                 Est_T2 = numeric(num_models), 
+                 SE_T2 = numeric(num_models), 
+                 t_T2 = numeric(num_models), 
+                 p_T2 = numeric(num_models),
+                 #12
+                 Est_12 = numeric(num_models), 
+                 SE_12 = numeric(num_models), 
+                 t_12 = numeric(num_models), 
+                 p_12 = numeric(num_models),
+                 R_squared = numeric(num_models), 
+                 LCL = numeric(num_models), 
+                 UCL = numeric(num_models))
+
+#Standardize betas
+stBeta = lapply(model, function(x) {(lm.beta(x))})
+stBeta_reordered = lapply(model_reordered, function(x) {(lm.beta(x))})
+
+for (i in 1:num_models) {
+  df[i, "Est_T1"] <- stBeta[[i]]$standardized.coefficients[4]
+  df[i, "Est_T2"] <- stBeta[[i]]$standardized.coefficients[5]
+  df[i, "Est_12"] <- stBeta_reordered[[i]]$standardized.coefficients[4]
+  df[i, "F_statistic"] <- Lm_F[[i]]
+  df[i, "Anova_p"] <- Lm_p[[i]]
+  df[i, "R_squared"] <- Lm_rsq_CI[[i]]$Rsq
+  df[i, "LCL"] <- Lm_rsq_CI[[i]]$LCL
+  df[i, "UCL"] <- Lm_rsq_CI[[i]]$UCL
+  #df[i, "Est_T1"] <- S1Td_stats[[i]][1]
+  df[i, "SE_T1"] <- S1Td_stats[[i]][2]
+  df[i, "t_T1"] <- S1Td_stats[[i]][3]
+  df[i, "p_T1"] <- NA
+  #df[i, "Est_T2"] <- S2Td_stats[[i]][1]
+  df[i, "SE_T2"] <- S2Td_stats[[i]][2]
+  df[i, "t_T2"] <- S2Td_stats[[i]][3]
+  df[i, "p_T2"] <- NA
+  #df[i, "Est_12"] <- S1S2_stats[[i]][1]
+  df[i, "SE_12"] <- S1S2_stats[[i]][2]
+  df[i, "t_12"] <- S1S2_stats[[i]][3]
+  df[i, "p_12"] <- NA
+}
+
+
+df['p_T1']<-  pairwise_p[1]
+df['p_T2']<-  pairwise_p[2]
+df['p_12']<-  pairwise_p[3]
+
+rownames(df)<- rnames
+
+
+# Add a new sheet to the workbook
+addWorksheet(wb, sheetName = sheet_name)
+
+# Write the data frame to the new sheet, including row index names
+writeData(wb, sheet = sheet_name, x= df,row.names = TRUE,col.names = TRUE)
+
+```
+
+
+Psychopathology bifactors Year 1
+```{r}
+#Clean up environment if desired
+rm(list=setdiff(ls(),c("subjData","n",'filename','wb')))
+
+#Get bifactor variable names
+bifactors <- c("GENERAL1", "EXT1","ADHD1","INT1")
+
+#Run models (all three groups included)
+#TD is the comparison group in Hydra_k2. This model will provide estimates and p-values for TD vs. S1 and TD vs. S2.
+biLm <- lapply(bifactors, function(x) {
+  lm(substitute(i ~ age_1 + FEMALE_b + Hydra_k2 + mri_info_deviceserialnumber_b , list(i = as.name(x))), data=subjData)
+})
+
+#Look at model summaries
+biLmSumm <- lapply(biLm, summary)
+
+
+##Pass the results to the anova() function to fit ANOVAs
+#These are your omnibus ANOVA tests (tells you if the three groups are significantly different)
+biAnova <- lapply(biLm, anova)
+
+#Pull the p-values
+bi_p <- sapply(biAnova, function(v) v$"Pr(>F)"[3])
+
+#Convert to data frame
+bi_p <- as.data.frame(bi_p)
+
+#Add row names for ease of viewing
+rownames(bi_p) <- bifactors
+
+#Print original p-values to three decimal places
+bi_p_round <- round(bi_p,3)
+
+
+##FDR correction across all omnibus anova tests
+#FDR correct p-values
+bi_p_fdr <- p.adjust(bi_p[,1],method="fdr")
+
+#Convert to data frame
+bi_p_fdr <- as.data.frame(bi_p_fdr)
+
+#Print fdr-corrected p-values to three decimal places
+bi_p_fdr_round <- round(bi_p_fdr,3)
+
+#Add names
+biNames <- as.data.frame(bifactors)
+bi_omnibus <- cbind(biNames,bi_p_fdr_round)
+
+#Trim table to only variables that passed FDR correction
+bi_omnibus_signif <- bi_omnibus[bi_p_fdr<0.05,]
+
+
+##Run same model with Hydra_k2_reordered to make S2 the comparison group in order to see S1 vs S2 differences in the model.
+#This model will provide estimates and p-values for S1-S2.
+biLm_reordered <- lapply(bifactors, function(x) {
+  lm(substitute(i ~ age_1 + FEMALE_b + Hydra_k2_reordered + mri_info_deviceserialnumber_b, list(i = as.name(x))), data=subjData)
+})
+
+#Look at model summaries
+biLmSumm_reordered <- lapply(biLm_reordered, summary)
+
+
+##Pairwise comparisons
+#Pull uncorrected p-values
+bi_S1vsTd <- sapply(biLm, function(v) summary(v)$coefficients[4,4])
+bi_S2vsTd <- sapply(biLm, function(v) summary(v)$coefficients[5,4])
+bi_S1vsS2 <- sapply(biLm_reordered, function(v) summary(v)$coefficients[4,4])
+
+#Combine the pairwise p values
+bi_pairs <- cbind(bi_S1vsTd,bi_S2vsTd, bi_S1vsS2)
+
+#Convert to data frame
+bi_pairs <- as.data.frame(bi_pairs)
+
+#Add row names for ease of viewing
+rownames(bi_pairs) <- bifactors
+
+#Print original p-values to three decimal places
+bi_pairs_round <- round(bi_pairs,3)
+
+
+##FDR correction across the three pairwise group comparisons (S1vsTd, S2vsTd, and S1vsS2)
+#Create an empty table for the fdr results
+bi_fdrTable<-as.data.frame(matrix(nrow=4,ncol=3))
+colnames(bi_fdrTable)[1]<-"bi_S1vsTd_pfdr"
+colnames(bi_fdrTable)[2]<-"bi_S2vsTd_pfdr"
+colnames(bi_fdrTable)[3]<-"bi_S1vsS2_pfdr"
+
+#FDR correct across rows
+for(i in 1:nrow(bi_pairs)) {
+    row <- bi_pairs[i,]
+    bi_fdrTable[i,] <- p.adjust(bi_pairs[i,],method="fdr")
+}
+
+#Print fdr-corrected p-values to three decimal places
+bi_fdrTable_round <- round(bi_fdrTable,3)
+
+#Add names
+bi_pairwise <- cbind(biNames,bi_fdrTable_round)
+
+
+```
+
+Code to create Tables - Bifactor year 1 
+```{r}
+
+# Specify file and sheet names
+sheet_name <- "Bifactor_1"         
+num_models <- length(biLm)
+anova_model = biAnova
+model = biLm 
+modelSumm = biLmSumm
+model_reordered = biLm_reordered
+modelSumm_reordered = biLmSumm_reordered
+pairwise_p = bi_fdrTable_round
+rnames = bifactors
+var = 4 # var = number of variables included in lm model (age, female, bifactors, & site/scanner)
+
+# ANOVA
+Lm_F <- lapply(anova_model, function(x) {(x$`F value`[3])})
+Lm_p <- lapply(anova_model, function(x) {(x$`Pr(>F)`[3])})
+
+## Confidence intevals
+Lm_rsq_CI <- lapply(modelSumm, function(x) {CI.Rsq(x$r.squared,n,4,.95)})
+
+
+#Estimate Se T p 
+S1Td_stats <- lapply(model, function(v) summary(v)$coefficients[4,])
+S2Td_stats <- lapply(model, function(v) summary(v)$coefficients[5,])
+S1S2_stats <- lapply(model_reordered, function(v) summary(v)$coefficients[4,])
+
+
+
+df <- data.frame(F_statistic = numeric(num_models),
+                 Anova_p = numeric(num_models), 
+                 #T1
+                 Est_T1 = numeric(num_models), 
+                 SE_T1 = numeric(num_models), 
+                 t_T1 = numeric(num_models), 
+                 p_T1 = numeric(num_models), 
+                 #T2
+                 Est_T2 = numeric(num_models), 
+                 SE_T2 = numeric(num_models), 
+                 t_T2 = numeric(num_models), 
+                 p_T2 = numeric(num_models),
+                 #12
+                 Est_12 = numeric(num_models), 
+                 SE_12 = numeric(num_models), 
+                 t_12 = numeric(num_models), 
+                 p_12 = numeric(num_models),
+                 R_squared = numeric(num_models), 
+                 LCL = numeric(num_models), 
+                 UCL = numeric(num_models))
+
+#Standardize betas
+stBeta = lapply(model, function(x) {(lm.beta(x))})
+stBeta_reordered = lapply(model_reordered, function(x) {(lm.beta(x))})
+
+for (i in 1:num_models) {
+  df[i, "Est_T1"] <- stBeta[[i]]$standardized.coefficients[4]
+  df[i, "Est_T2"] <- stBeta[[i]]$standardized.coefficients[5]
+  df[i, "Est_12"] <- stBeta_reordered[[i]]$standardized.coefficients[4]
+  df[i, "F_statistic"] <- Lm_F[[i]]
+  df[i, "Anova_p"] <- Lm_p[[i]]
+  df[i, "R_squared"] <- Lm_rsq_CI[[i]]$Rsq
+  df[i, "LCL"] <- Lm_rsq_CI[[i]]$LCL
+  df[i, "UCL"] <- Lm_rsq_CI[[i]]$UCL
+  #df[i, "Est_T1"] <- S1Td_stats[[i]][1]
+  df[i, "SE_T1"] <- S1Td_stats[[i]][2]
+  df[i, "t_T1"] <- S1Td_stats[[i]][3]
+  df[i, "p_T1"] <- NA
+  #df[i, "Est_T2"] <- S2Td_stats[[i]][1]
+  df[i, "SE_T2"] <- S2Td_stats[[i]][2]
+  df[i, "t_T2"] <- S2Td_stats[[i]][3]
+  df[i, "p_T2"] <- NA
+  #df[i, "Est_12"] <- S1S2_stats[[i]][1]
+  df[i, "SE_12"] <- S1S2_stats[[i]][2]
+  df[i, "t_12"] <- S1S2_stats[[i]][3]
+  df[i, "p_12"] <- NA
+}
+
+
+df['p_T1']<-  pairwise_p[1]
+df['p_T2']<-  pairwise_p[2]
+df['p_12']<-  pairwise_p[3]
+
+rownames(df)<- rnames
+
+
+# Add a new sheet to the workbook
+addWorksheet(wb, sheetName = sheet_name)
+
+# Write the data frame to the new sheet, including row index names
+writeData(wb, sheet = sheet_name, x= df,row.names = TRUE,col.names = TRUE)
+
+```
+
+
+Psychopathology bifactors Year 2
+```{r}
+#Clean up environment if desired
+rm(list=setdiff(ls(),c("subjData","n",'filename','wb')))
+
+#Get bifactor variable names
+bifactors <- c("GENERAL2", "EXT2","ADHDB","INT2")
+
+#Run models (all three groups included)
+#TD is the comparison group in Hydra_k2. This model will provide estimates and p-values for TD vs. S1 and TD vs. S2.
+biLm <- lapply(bifactors, function(x) {
+  lm(substitute(i ~ age_2 + FEMALE_b + Hydra_k2  + mri_info_deviceserialnumber_b, list(i = as.name(x))), data=subjData)
+})
+
+#Look at model summaries
+biLmSumm <- lapply(biLm, summary)
+
+
+##Pass the results to the anova() function to fit ANOVAs
+#These are your omnibus ANOVA tests (tells you if the three groups are significantly different)
+biAnova <- lapply(biLm, anova)
+
+#Pull the p-values
+bi_p <- sapply(biAnova, function(v) v$"Pr(>F)"[3])
+
+#Convert to data frame
+bi_p <- as.data.frame(bi_p)
+
+#Add row names for ease of viewing
+rownames(bi_p) <- bifactors
+
+#Print original p-values to three decimal places
+bi_p_round <- round(bi_p,3)
+
+
+##FDR correction across all omnibus anova tests
+#FDR correct p-values
+bi_p_fdr <- p.adjust(bi_p[,1],method="fdr")
+
+#Convert to data frame
+bi_p_fdr <- as.data.frame(bi_p_fdr)
+
+#Print fdr-corrected p-values to three decimal places
+bi_p_fdr_round <- round(bi_p_fdr,3)
+
+#Add names
+biNames <- as.data.frame(bifactors)
+bi_omnibus <- cbind(biNames,bi_p_fdr_round)
+
+#Trim table to only variables that passed FDR correction
+bi_omnibus_signif <- bi_omnibus[bi_p_fdr<0.05,]
+
+
+##Run same model with Hydra_k2_reordered to make S2 the comparison group in order to see S1 vs S2 differences in the model.
+#This model will provide estimates and p-values for S1-S2.
+biLm_reordered <- lapply(bifactors, function(x) {
+  lm(substitute(i ~ age_2 + FEMALE_b + Hydra_k2_reordered + mri_info_deviceserialnumber_b, list(i = as.name(x))), data=subjData)
+})
+
+#Look at model summaries
+biLmSumm_reordered <- lapply(biLm_reordered, summary)
+
+
+##Pairwise comparisons
+#Pull uncorrected p-values
+bi_S1vsTd <- sapply(biLm, function(v) summary(v)$coefficients[4,4])
+bi_S2vsTd <- sapply(biLm, function(v) summary(v)$coefficients[5,4])
+bi_S1vsS2 <- sapply(biLm_reordered, function(v) summary(v)$coefficients[4,4])
+
+#Combine the pairwise p values
+bi_pairs <- cbind(bi_S1vsTd,bi_S2vsTd, bi_S1vsS2)
+
+#Convert to data frame
+bi_pairs <- as.data.frame(bi_pairs)
+
+#Add row names for ease of viewing
+rownames(bi_pairs) <- bifactors
+
+#Print original p-values to three decimal places
+bi_pairs_round <- round(bi_pairs,3)
+
+
+##FDR correction across the three pairwise group comparisons (S1vsTd, S2vsTd, and S1vsS2)
+#Create an empty table for the fdr results
+bi_fdrTable<-as.data.frame(matrix(nrow=4,ncol=3))
+colnames(bi_fdrTable)[1]<-"bi_S1vsTd_pfdr"
+colnames(bi_fdrTable)[2]<-"bi_S2vsTd_pfdr"
+colnames(bi_fdrTable)[3]<-"bi_S1vsS2_pfdr"
+
+#FDR correct across rows
+for(i in 1:nrow(bi_pairs)) {
+    row <- bi_pairs[i,]
+    bi_fdrTable[i,] <- p.adjust(bi_pairs[i,],method="fdr")
+}
+
+#Print fdr-corrected p-values to three decimal places
+bi_fdrTable_round <- round(bi_fdrTable,3)
+
+#Add names
+bi_pairwise <- cbind(biNames,bi_fdrTable_round)
+
+
+```
+Create Tables - Bifactor year 2
+```{r}
+
+# Specify file and sheet names
+sheet_name <- "Bifactor_2"         
+num_models <- length(biLm)
+anova_model = biAnova
+model = biLm 
+modelSumm = biLmSumm
+model_reordered = biLm_reordered
+modelSumm_reordered = biLmSumm_reordered
+pairwise_p = bi_fdrTable_round
+rnames = bifactors
+var = 4 # var = number of variables included in lm model (age, female, bifactors, & site/scanner)
+
+# ANOVA
+Lm_F <- lapply(anova_model, function(x) {(x$`F value`[3])})
+Lm_p <- lapply(anova_model, function(x) {(x$`Pr(>F)`[3])})
+
+## Confidence intevals
+Lm_rsq_CI <- lapply(modelSumm, function(x) {CI.Rsq(x$r.squared,n,var,.95)})
+
+
+
+#Estimate Se T p 
+S1Td_stats <- lapply(model, function(v) summary(v)$coefficients[4,])
+S2Td_stats <- lapply(model, function(v) summary(v)$coefficients[5,])
+S1S2_stats <- lapply(model_reordered, function(v) summary(v)$coefficients[4,])
+
+
+
+df <- data.frame(F_statistic = numeric(num_models),
+                 Anova_p = numeric(num_models), 
+                 #T1
+                 Est_T1 = numeric(num_models), 
+                 SE_T1 = numeric(num_models), 
+                 t_T1 = numeric(num_models), 
+                 p_T1 = numeric(num_models), 
+                 #T2
+                 Est_T2 = numeric(num_models), 
+                 SE_T2 = numeric(num_models), 
+                 t_T2 = numeric(num_models), 
+                 p_T2 = numeric(num_models),
+                 #12
+                 Est_12 = numeric(num_models), 
+                 SE_12 = numeric(num_models), 
+                 t_12 = numeric(num_models), 
+                 p_12 = numeric(num_models),
+                 R_squared = numeric(num_models), 
+                 LCL = numeric(num_models), 
+                 UCL = numeric(num_models))
+
+#Standardize betas
+stBeta = lapply(model, function(x) {(lm.beta(x))})
+stBeta_reordered = lapply(model_reordered, function(x) {(lm.beta(x))})
+
+for (i in 1:num_models) {
+  df[i, "Est_T1"] <- stBeta[[i]]$standardized.coefficients[4]
+  df[i, "Est_T2"] <- stBeta[[i]]$standardized.coefficients[5]
+  df[i, "Est_12"] <- stBeta_reordered[[i]]$standardized.coefficients[4]
+  df[i, "F_statistic"] <- Lm_F[[i]]
+  df[i, "Anova_p"] <- Lm_p[[i]]
+  df[i, "R_squared"] <- Lm_rsq_CI[[i]]$Rsq
+  df[i, "LCL"] <- Lm_rsq_CI[[i]]$LCL
+  df[i, "UCL"] <- Lm_rsq_CI[[i]]$UCL
+  #df[i, "Est_T1"] <- S1Td_stats[[i]][1]
+  df[i, "SE_T1"] <- S1Td_stats[[i]][2]
+  df[i, "t_T1"] <- S1Td_stats[[i]][3]
+  df[i, "p_T1"] <- NA
+  #df[i, "Est_T2"] <- S2Td_stats[[i]][1]
+  df[i, "SE_T2"] <- S2Td_stats[[i]][2]
+  df[i, "t_T2"] <- S2Td_stats[[i]][3]
+  df[i, "p_T2"] <- NA
+  #df[i, "Est_12"] <- S1S2_stats[[i]][1]
+  df[i, "SE_12"] <- S1S2_stats[[i]][2]
+  df[i, "t_12"] <- S1S2_stats[[i]][3]
+  df[i, "p_12"] <- NA
+}
+
+
+df['p_T1']<-  pairwise_p[1]
+df['p_T2']<-  pairwise_p[2]
+df['p_12']<-  pairwise_p[3]
+
+rownames(df)<- rnames
+
+# Add a new sheet to the workbook
+addWorksheet(wb, sheetName = sheet_name)
+
+# Write the data frame to the new sheet, including row index names
+writeData(wb, sheet = sheet_name, x= df,row.names = TRUE,col.names = TRUE)
+
+```
+
+
+############################## Examine cognitive variables across different clusters #################################
+
+Flanker 
+```{r}
+#Clean up environment if desired
+rm(list=setdiff(ls(),c("subjData","n",'filename','wb')))
+
+##Run model
+flankerLm <- lm(flanker_b ~ age_b + FEMALE_b + Hydra_k2 + mri_info_deviceserialnumber_b, data=subjData)
+
+#Look at model summary
+flankerLmSumm <- summary(flankerLm)
+
+
+##Pass the results to the anova() function to fit ANOVAs
+#This is your omnibus ANOVA test (tells you if the three groups are significantly different)
+#df1=k-1, df2=n-k
+flankerAnova <- anova(flankerLm)
+
+
+##Run same model with Hydra_k2_reordered to make S2 the comparison group in order to see S1 vs S2 differences in the model.
+flankerLm_reordered <- lm(flanker_b ~ age_b + FEMALE_b + Hydra_k2_reordered + mri_info_deviceserialnumber_b, data=subjData)
+
+#Look at model summary
+flankerLmSumm_reordered <- summary(flankerLm_reordered)
+
+
+##Pairwise comparisons
+#Pull uncorrected p-values
+flanker_S1vsTd <- summary(flankerLm)$coefficients[4,4]
+flanker_S2vsTd <- summary(flankerLm)$coefficients[5,4]
+flanker_S1vsS2 <- summary(flankerLm_reordered)$coefficients[4,4]
+
+#Combine the pairwise p values
+flanker_pairs <- cbind(flanker_S1vsTd,flanker_S2vsTd,flanker_S1vsS2)
+
+#Convert to data frame
+flanker_pairs <- as.data.frame(flanker_pairs)
+
+#Print original p-values to three decimal places
+flanker_pairs_round <- round(flanker_pairs,3)
+
+
+##FDR correction across the three pairwise group comparisons (S1vsTd, S2vsTd, and S1vsS2)
+flanker_fdr <- p.adjust(flanker_pairs[1,],method="fdr")
+
+#Print fdr-corrected p-values to three decimal places
+flanker_fdr_round <- round(flanker_fdr,3)
+
+
+```
+
+Code to create Tables - Flanker
+```{r}
+
+# Specify file and sheet names
+sheet_name <- "Flanker"         
+num_models <- 1
+anova_model = flankerAnova
+model = flankerLm 
+modelSumm = flankerLmSumm
+model_reordered = flankerLm_reordered
+modelSumm_reordered = flankerLmSumm_reordered
+pairwise_p = flanker_fdr_round
+rnames = 'flanker'
+var = 4 # var = number of variables included in lm model (age, female, bifactors, & site/scanner) 
+
+
+# ANOVA
+Lm_F <- anova_model$`F value`[3]
+Lm_p <- anova_model$`Pr(>F)`[3]
+
+## Confidence intevals
+Lm_rsq_CI <- CI.Rsq(modelSumm$r.squared,n,var,.95)
+
+
+#Estimate Se T p 
+S1Td_stats <- modelSumm$coefficients[4,]
+S2Td_stats <- modelSumm$coefficients[5,]
+S1S2_stats <- modelSumm_reordered$coefficients[4,]
+
+
+df <- data.frame(F_statistic = numeric(num_models),
+                 Anova_p = numeric(num_models), 
+                 #T1
+                 Est_T1 = numeric(num_models), 
+                 SE_T1 = numeric(num_models), 
+                 t_T1 = numeric(num_models), 
+                 p_T1 = numeric(num_models), 
+                 #T2
+                 Est_T2 = numeric(num_models), 
+                 SE_T2 = numeric(num_models), 
+                 t_T2 = numeric(num_models), 
+                 p_T2 = numeric(num_models),
+                 #12
+                 Est_12 = numeric(num_models), 
+                 SE_12 = numeric(num_models), 
+                 t_12 = numeric(num_models), 
+                 p_12 = numeric(num_models),
+                 R_squared = numeric(num_models), 
+                 LCL = numeric(num_models), 
+                 UCL = numeric(num_models))
+
+
+#Standardize betas
+stBeta = lm.beta(model)
+stBeta_reordered = lm.beta(model_reordered)
+
+for (i in 1:num_models) {
+  df[i, "Est_T1"] <- stBeta$standardized.coefficients[4]
+  df[i, "Est_T2"] <- stBeta$standardized.coefficients[5]
+  df[i, "Est_12"] <- stBeta_reordered$standardized.coefficients[4]
+  df[i, "F_statistic"] <- Lm_F
+  df[i, "Anova_p"] <- Lm_p
+  df[i, "R_squared"] <- Lm_rsq_CI$Rsq
+  df[i, "LCL"] <- Lm_rsq_CI$LCL
+  df[i, "UCL"] <- Lm_rsq_CI$UCL
+  #df[i, "Est_T1"] <- S1Td_stats[1]
+  df[i, "SE_T1"] <- S1Td_stats[2]
+  df[i, "t_T1"] <- S1Td_stats[3]
+  df[i, "p_T1"] <- pairwise_p[1]
+  #df[i, "Est_T2"] <- S2Td_stats[1]
+  df[i, "SE_T2"] <- S2Td_stats[2]
+  df[i, "t_T2"] <- S2Td_stats[3]
+  df[i, "p_T2"] <- pairwise_p[2]
+  #df[i, "Est_12"] <- S1S2_stats[1]
+  df[i, "SE_12"] <- S1S2_stats[2]
+  df[i, "t_12"] <- S1S2_stats[3]
+  df[i, "p_12"] <- pairwise_p[3]
+}
+
+
+rownames(df)<- rnames
+
+
+# Add a new sheet to the workbook
+addWorksheet(wb, sheetName = sheet_name)
+
+# Write the data frame to the new sheet, including row index names
+writeData(wb, sheet = sheet_name, x= df,row.names = TRUE,col.names = TRUE)
+
+
+```
+
+
+Cardsort Accuracy
+```{r}
+
+#Clean up environment
+rm(list=setdiff(ls(),c("subjData","n",'filename','wb')))
+
+##Run model
+cardLm <- lm(cardsort_b ~ age_b + FEMALE_b + Hydra_k2 + mri_info_deviceserialnumber_b, data=subjData)
+
+#Look at model summary
+cardLmSumm <- summary(cardLm)
+
+
+##Pass the results to the anova() function to fit ANOVAs
+#This is your omnibus ANOVA test (tells you if the three groups are significantly different)
+#df1=k-1, df2=n-k
+cardAnova <- anova(cardLm)
+
+
+##Run same model with Hydra_k2_reordered to make S2 the comparison group in order to see S1 vs S2 differences in the model.
+cardLm_reordered <- lm(cardsort_b ~ age_b + FEMALE_b + Hydra_k2_reordered + mri_info_deviceserialnumber_b, data=subjData)
+
+#Look at model summary
+cardLmSumm_reordered <- summary(cardLm_reordered)
+
+
+##Pairwise comparisons
+#Pull uncorrected p-values
+card_S1vsTd <- summary(cardLm)$coefficients[4,4]
+card_S2vsTd <- summary(cardLm)$coefficients[5,4]
+card_S1vsS2 <- summary(cardLm_reordered)$coefficients[4,4]
+#card_S1vsS2a <- summary(cardLm_reordered)$coeffƒcients[4,4]
+
+#Combine the pairwise p values
+card_pairs <- cbind(card_S1vsTd,card_S2vsTd,card_S1vsS2)
+
+#Convert to data frame
+card_pairs <- as.data.frame(card_pairs)
+
+#Print original p-values to three decimal places
+card_pairs_round <- round(card_pairs,3)
+
+
+##FDR correction across the three pairwise group comparisons (S1vsTd, S2vsTd, and S1vsS2)
+card_fdr <- p.adjust(card_pairs[1,],method="fdr")
+
+#Print fdr-corrected p-values to three decimal places
+card_fdr_round <- round(card_fdr,3)
+
+```
+Create Tables - Card sort
+```{r}
+
+# Specify file and sheet names
+sheet_name <- "Card_Sort"         
+num_models <- 1
+anova_model = cardAnova
+model = cardLm 
+modelSumm = cardLmSumm
+model_reordered = cardLm_reordered
+modelSumm_reordered = cardLmSumm_reordered
+pairwise_p = card_fdr_round
+rnames = 'cardsort'
+var = 4 # var = number of variables included in lm model (age, female, bifactors, & site/scanner)
+
+
+# ANOVA
+Lm_F <- anova_model$`F value`[3]
+Lm_p <- anova_model$`Pr(>F)`[3]
+
+## Confidence intevals
+Lm_rsq_CI <- CI.Rsq(modelSumm$r.squared,n,var,.95)
+
+
+#Estimate Se T p 
+S1Td_stats <- modelSumm$coefficients[4,]
+S2Td_stats <- modelSumm$coefficients[5,]
+S1S2_stats <- modelSumm_reordered$coefficients[4,]
+
+
+
+df <- data.frame(F_statistic = numeric(num_models),
+                 Anova_p = numeric(num_models), 
+                 #T1
+                 Est_T1 = numeric(num_models), 
+                 SE_T1 = numeric(num_models), 
+                 t_T1 = numeric(num_models), 
+                 p_T1 = numeric(num_models), 
+                 #T2
+                 Est_T2 = numeric(num_models), 
+                 SE_T2 = numeric(num_models), 
+                 t_T2 = numeric(num_models), 
+                 p_T2 = numeric(num_models),
+                 #12
+                 Est_12 = numeric(num_models), 
+                 SE_12 = numeric(num_models), 
+                 t_12 = numeric(num_models), 
+                 p_12 = numeric(num_models),
+                 R_squared = numeric(num_models), 
+                 LCL = numeric(num_models), 
+                 UCL = numeric(num_models))
+
+
+#Standardize betas
+stBeta = lm.beta(model)
+stBeta_reordered = lm.beta(model_reordered)
+  
+for (i in 1:num_models) {
+  df[i, "Est_T1"] <- stBeta$standardized.coefficients[4]
+  df[i, "Est_T2"] <- stBeta$standardized.coefficients[5]
+  df[i, "Est_12"] <- stBeta_reordered$standardized.coefficients[4]
+  df[i, "F_statistic"] <- Lm_F
+  df[i, "Anova_p"] <- Lm_p
+  df[i, "R_squared"] <- Lm_rsq_CI$Rsq
+  df[i, "LCL"] <- Lm_rsq_CI$LCL
+  df[i, "UCL"] <- Lm_rsq_CI$UCL
+  #df[i, "Est_T1"] <- S1Td_stats[1]
+  df[i, "SE_T1"] <- S1Td_stats[2]
+  df[i, "t_T1"] <- S1Td_stats[3]
+  df[i, "p_T1"] <- pairwise_p[1]
+  #df[i, "Est_T2"] <- S2Td_stats[1]
+  df[i, "SE_T2"] <- S2Td_stats[2]
+  df[i, "t_T2"] <- S2Td_stats[3]
+  df[i, "p_T2"] <- pairwise_p[2]
+  #df[i, "Est_12"] <- S1S2_stats[1]
+  df[i, "SE_12"] <- S1S2_stats[2]
+  df[i, "t_12"] <- S1S2_stats[3]
+  df[i, "p_12"] <- pairwise_p[3]
+}
+
+
+rownames(df)<- rnames
+
+
+# Add a new sheet to the workbook
+addWorksheet(wb, sheetName = sheet_name)
+
+# Write the data frame to the new sheet, including row index names
+writeData(wb, sheet = sheet_name, x= df,row.names = TRUE,col.names = TRUE)
+
+```
+
+
+Pattern Accuracy
+```{r}
+#Clean up environment if desired
+rm(list=setdiff(ls(),c("subjData","n",'filename','wb')))
+
+##Run model
+patternLm <- lm(pattern_b ~ age_b + FEMALE_b + Hydra_k2 + mri_info_deviceserialnumber_b, data=subjData)
+
+#Look at model summary
+patternLmSumm <- summary(patternLm)
+
+
+##Pass the results to the anova() function to fit ANOVAs
+#This is your omnibus ANOVA test (tells you if the three groups are significantly different)
+#df1=k-1, df2=n-k
+patternAnova <- anova(patternLm)
+
+
+##Run same model with Hydra_k2_reordered to make S2 the comparison group in order to see S1 vs S2 differences in the model.
+patternLm_reordered <- lm(pattern_b ~ age_b + FEMALE_b + Hydra_k2_reordered + mri_info_deviceserialnumber_b, data=subjData)
+
+#Look at model summary
+patternLmSumm_reordered <- summary(patternLm_reordered)
+
+
+##Pairwise comparisons
+#Pull uncorrected p-values
+pattern_S1vsTd <- summary(patternLm)$coefficients[4,4]
+pattern_S2vsTd <- summary(patternLm)$coefficients[5,4]
+pattern_S1vsS2 <- summary(patternLm_reordered)$coefficients[4,4]
+
+#Combine the pairwise p values
+pattern_pairs <- cbind(pattern_S1vsTd,pattern_S2vsTd,pattern_S1vsS2)
+
+#Convert to data frame
+pattern_pairs <- as.data.frame(pattern_pairs)
+
+#Print original p-values to three decimal places
+pattern_pairs_round <- round(pattern_pairs,3)
+
+
+##FDR correction across the three pairwise group comparisons (S1vsTd, S2vsTd, and S1vsS2)
+pattern_fdr <- p.adjust(pattern_pairs[1,],method="fdr")
+
+#Print fdr-corrected p-values to three decimal places
+pattern_fdr_round <- round(pattern_fdr,3)
+
+
+```
+Create Tables - Pattern
+```{r}
+
+# Specify file and sheet names
+sheet_name <- "Pattern_Accuracy"         
+num_models <- 1
+anova_model = patternAnova
+model = patternLm 
+modelSumm = patternLmSumm
+model_reordered = patternLm_reordered
+modelSumm_reordered = patternLmSumm_reordered
+pairwise_p = pattern_fdr_round
+rnames = 'Pattern'
+var = 4 # var = number of variables included in lm model (age, female, bifactors, & site/scanner)
+
+
+# ANOVA
+Lm_F <- anova_model$`F value`[3]
+Lm_p <- anova_model$`Pr(>F)`[3]
+
+## Confidence intevals
+Lm_rsq_CI <- CI.Rsq(modelSumm$r.squared,n,var,.95)
+
+
+#Estimate Se T p 
+S1Td_stats <- modelSumm$coefficients[4,]
+S2Td_stats <- modelSumm$coefficients[5,]
+S1S2_stats <- modelSumm_reordered$coefficients[4,]
+
+
+df <- data.frame(F_statistic = numeric(num_models),
+                 Anova_p = numeric(num_models), 
+                 #T1
+                 Est_T1 = numeric(num_models), 
+                 SE_T1 = numeric(num_models), 
+                 t_T1 = numeric(num_models), 
+                 p_T1 = numeric(num_models), 
+                 #T2
+                 Est_T2 = numeric(num_models), 
+                 SE_T2 = numeric(num_models), 
+                 t_T2 = numeric(num_models), 
+                 p_T2 = numeric(num_models),
+                 #12
+                 Est_12 = numeric(num_models), 
+                 SE_12 = numeric(num_models), 
+                 t_12 = numeric(num_models), 
+                 p_12 = numeric(num_models),
+                 R_squared = numeric(num_models), 
+                 LCL = numeric(num_models), 
+                 UCL = numeric(num_models))
+
+
+#Standardize betas
+stBeta = lm.beta(model)
+stBeta_reordered = lm.beta(model_reordered)
+  
+for (i in 1:num_models) {
+  df[i, "Est_T1"] <- stBeta$standardized.coefficients[4]
+  df[i, "Est_T2"] <- stBeta$standardized.coefficients[5]
+  df[i, "Est_12"] <- stBeta_reordered$standardized.coefficients[4]
+  df[i, "F_statistic"] <- Lm_F
+  df[i, "Anova_p"] <- Lm_p
+  df[i, "R_squared"] <- Lm_rsq_CI$Rsq
+  df[i, "LCL"] <- Lm_rsq_CI$LCL
+  df[i, "UCL"] <- Lm_rsq_CI$UCL
+  #df[i, "Est_T1"] <- S1Td_stats[1]
+  df[i, "SE_T1"] <- S1Td_stats[2]
+  df[i, "t_T1"] <- S1Td_stats[3]
+  #df[i, "p_T1"] <- S1Td_stats[[i]][4]
+  df[i, "p_T1"] <- pairwise_p[1]
+  #df[i, "Est_T2"] <- S2Td_stats[1]
+  df[i, "SE_T2"] <- S2Td_stats[2]
+  df[i, "t_T2"] <- S2Td_stats[3]
+  df[i, "p_T2"] <- pairwise_p[2]
+  #df[i, "Est_12"] <- S1S2_stats[1]
+  df[i, "SE_12"] <- S1S2_stats[2]
+  df[i, "t_12"] <- S1S2_stats[3]
+  df[i, "p_12"] <- pairwise_p[3]
+}
+
+
+
+rownames(df)<- rnames
+
+
+# Add a new sheet to the workbook
+addWorksheet(wb, sheetName = sheet_name)
+
+# Write the data frame to the new sheet, including row index names
+writeData(wb, sheet = sheet_name, x= df,row.names = TRUE,col.names = TRUE)
+
+```
+
+############################## NEURAL BASELINE  #################################
+
+Total gray matter volume
+```{r}
+#Clean up environment
+rm(list=setdiff(ls(),c("subjData","n",'filename','wb')))
+
+#Divide total gray matter volume by 1000 to change the units from cubic millimeters (mm3) to cubic centimeters (cc3); 1 cc3 = 1,000 mm3
+subjData$smri_vol_cdk_total_b_1000 <- subjData$smri_vol_cdk_total_b/1000
+
+#Run model
+totGrayLm <- lm(smri_vol_cdk_total_b_1000 ~ age_b + FEMALE_b  + Hydra_k2 + mri_info_deviceserialnumber_b, data=subjData)
+totGrayLmSumm <- summary(totGrayLm)
+
+
+#Run same model with Hydra_k2_reordered to make S2 the comparison group in order to see S1 vs S2 differences in the model.
+totGrayLm2 <- lm(smri_vol_cdk_total_b_1000 ~ age_b + FEMALE_b  + Hydra_k2_reordered + mri_info_deviceserialnumber_b, data=subjData)
+totGrayLmSumm2 <- summary(totGrayLm2)
+
+
+##Pass the results to the anova() function to fit ANOVAs 
+#This is your omnibus ANOVA test (tells you if the three groups are significantly different)
+#df1=k-1, df2=n-k
+totGrayAnova <- anova(totGrayLm)
+
+
+##Pairwise comparisons
+#Pull uncorrected p-values
+totGray_S1vsTd <- summary(totGrayLm)$coefficients[4,4]
+totGray_S2vsTd <- summary(totGrayLm)$coefficients[5,4]
+totGray_S1vsS2 <- summary(totGrayLm2)$coefficients[4,4]
+
+
+#Combine the pairwise p values
+totGray_pairs <- cbind(totGray_S1vsTd,totGray_S2vsTd,totGray_S1vsS2)
+
+#Convert to data frame
+totGray_pairs <- as.data.frame(totGray_pairs)
+
+##FDR correction across the three pairwise group comparisons (S1vsTd, S2vsTd, and S1vsS2)
+totGray_fdr <- p.adjust(totGray_pairs[1,],method="fdr")
+
+#Print fdr-corrected p-values to three decimal places
+totGray_fdr_round <- data.frame(round(totGray_fdr,3))
+
+```
+
+Code to create Tables 
+```{r}
+
+# Specify file and sheet names
+sheet_name <- "Total_GMV"         
+num_models <- 1
+anova_model = totGrayAnova
+model = totGrayLm 
+modelSumm = totGrayLmSumm
+model_reordered = totGrayLm2
+modelSumm_reordered = totGrayLmSumm2
+pairwise_p = totGray_fdr_round
+rnames = 'Total GMV'
+var = 4 # var = number of variables included in lm model (age, female, bifactors, & site/scanner)
+
+
+# ANOVA
+Lm_F <- anova_model$`F value`[3]
+Lm_p <- anova_model$`Pr(>F)`[3]
+
+## Confidence intevals
+Lm_rsq_CI <- CI.Rsq(modelSumm$r.squared,n,var,.95)
+
+
+#Estimate Se T p 
+S1Td_stats <- modelSumm$coefficients[4,]
+S2Td_stats <- modelSumm$coefficients[5,]
+S1S2_stats <- modelSumm_reordered$coefficients[4,]
+
+
+df <- data.frame(F_statistic = numeric(num_models),
+                 Anova_p = numeric(num_models), 
+                 #T1
+                 Est_T1 = numeric(num_models), 
+                 SE_T1 = numeric(num_models), 
+                 t_T1 = numeric(num_models), 
+                 p_T1 = numeric(num_models), 
+                 #T2
+                 Est_T2 = numeric(num_models), 
+                 SE_T2 = numeric(num_models), 
+                 t_T2 = numeric(num_models), 
+                 p_T2 = numeric(num_models),
+                 #12
+                 Est_12 = numeric(num_models), 
+                 SE_12 = numeric(num_models), 
+                 t_12 = numeric(num_models), 
+                 p_12 = numeric(num_models),
+                 R_squared = numeric(num_models), 
+                 LCL = numeric(num_models), 
+                 UCL = numeric(num_models))
+
+#Standardize betas
+stBeta = lm.beta(model)
+stBeta_reordered = lm.beta(model_reordered)
+  
+for (i in 1:num_models) {
+  df[i, "Est_T1"] <- stBeta$standardized.coefficients[4]
+  df[i, "Est_T2"] <- stBeta$standardized.coefficients[5]
+  df[i, "Est_12"] <- stBeta_reordered$standardized.coefficients[4]
+  df[i, "F_statistic"] <- Lm_F
+  df[i, "Anova_p"] <- Lm_p
+  df[i, "R_squared"] <- Lm_rsq_CI$Rsq
+  df[i, "LCL"] <- Lm_rsq_CI$LCL
+  df[i, "UCL"] <- Lm_rsq_CI$UCL
+  #df[i, "Est_T1"] <- S1Td_stats[1]
+  df[i, "SE_T1"] <- S1Td_stats[2]
+  df[i, "t_T1"] <- S1Td_stats[3]
+  df[i, "p_T1"] <- pairwise_p[1,1]
+  #df[i, "Est_T2"] <- S2Td_stats[1]
+  df[i, "SE_T2"] <- S2Td_stats[2]
+  df[i, "t_T2"] <- S2Td_stats[3]
+  df[i, "p_T2"] <- pairwise_p[2,1]
+  #df[i, "Est_12"] <- S1S2_stats[1]
+  df[i, "SE_12"] <- S1S2_stats[2]
+  df[i, "t_12"] <- S1S2_stats[3]
+  df[i, "p_12"] <- pairwise_p[3,1]
+}
+
+
+rownames(df)<- rnames
+
+# Add a new sheet to the workbook
+addWorksheet(wb, sheetName = sheet_name)
+
+# Write the data frame to the new sheet, including row index names
+writeData(wb, sheet = sheet_name, x= df,row.names = TRUE,col.names = TRUE)
+
+
+```
+
+
+ICV
+```{r}
+#Clean up environment if desired
+rm(list=setdiff(ls(),c("subjData","n",'filename','wb')))
+
+#Divide ICV by 1000 to change the units from cubic millimeters (mm3) to cubic centimeters (cc3); 1 cc3 = 1,000 mm3
+subjData$TICV_b_1000 <- subjData$TICV_b/1000
+
+#Run model
+icvLm <- lm(TICV_b_1000 ~ age_b + FEMALE_b + Hydra_k2 + mri_info_deviceserialnumber_b, data=subjData)
+icvLmSumm <- summary(icvLm)
+
+#Run same model with Hydra_k2_reordered to make S2 the comparison group in order to see S1 vs S2 differences in the model.
+icvLm2 <- lm(TICV_b_1000 ~ age_b + FEMALE_b + Hydra_k2_reordered + mri_info_deviceserialnumber_b,  data=subjData)
+icvLmSumm2 <- summary(icvLm2)
+
+
+##Pass the results to the anova() function to fit ANOVAs 
+#This is your omnibus ANOVA test (tells you if the three groups are significantly different)
+#df1=k-1, df2=n-k
+icvAnova <- anova(icvLm)
+
+
+
+##Pairwise comparisons
+#Pull uncorrected p-values
+icv_S1vsTd <- summary(icvLm)$coefficients[4,4]
+icv_S2vsTd <- summary(icvLm)$coefficients[5,4]
+icv_S1vsS2 <- summary(icvLm2)$coefficients[4,4]
+
+
+#Combine the pairwise p values
+icv_pairs <- cbind(icv_S1vsTd,icv_S2vsTd,icv_S1vsS2)
+
+#Convert to data frame
+icv_pairs <- as.data.frame(icv_pairs)
+
+##FDR correction across the three pairwise group comparisons (S1vsTd, S2vsTd, and S1vsS2)
+icv_fdr <- p.adjust(icv_pairs[1,],method="fdr")
+
+#Print fdr-corrected p-values to three decimal places
+icv_fdr_round <- round(icv_fdr,3)
+
+```
+Create Tables
+```{r}
+
+# Specify file and sheet names
+sheet_name <- "TICV"         
+num_models <- 1
+anova_model = icvAnova
+model = icvLm 
+modelSumm = icvLmSumm
+model_reordered = icvLm2
+modelSumm_reordered = icvLmSumm2
+pairwise_p = icv_fdr_round
+rnames = 'TICV'
+var = 4 # var = number of variables included in lm model (age, female, bifactors, & site/scanner)
+
+
+# ANOVA
+Lm_F <- anova_model$`F value`[3]
+Lm_p <- anova_model$`Pr(>F)`[3]
+
+## Confidence intevals
+Lm_rsq_CI <- CI.Rsq(modelSumm$r.squared,n,var,.95)
+
+
+#Estimate Se T p 
+S1Td_stats <- modelSumm$coefficients[4,]
+S2Td_stats <- modelSumm$coefficients[5,]
+S1S2_stats <- modelSumm_reordered$coefficients[4,]
+
+
+df <- data.frame(F_statistic = numeric(num_models),
+                 Anova_p = numeric(num_models), 
+                 #T1
+                 Est_T1 = numeric(num_models), 
+                 SE_T1 = numeric(num_models), 
+                 t_T1 = numeric(num_models), 
+                 p_T1 = numeric(num_models), 
+                 #T2
+                 Est_T2 = numeric(num_models), 
+                 SE_T2 = numeric(num_models), 
+                 t_T2 = numeric(num_models), 
+                 p_T2 = numeric(num_models),
+                 #12
+                 Est_12 = numeric(num_models), 
+                 SE_12 = numeric(num_models), 
+                 t_12 = numeric(num_models), 
+                 p_12 = numeric(num_models),
+                 R_squared = numeric(num_models), 
+                 LCL = numeric(num_models), 
+                 UCL = numeric(num_models))
+
+
+
+#Standardize betas
+stBeta = lm.beta(model)
+stBeta_reordered = lm.beta(model_reordered)
+  
+for (i in 1:num_models) {
+  df[i, "Est_T1"] <- stBeta$standardized.coefficients[4]
+  df[i, "Est_T2"] <- stBeta$standardized.coefficients[5]
+  df[i, "Est_12"] <- stBeta_reordered$standardized.coefficients[4]
+  df[i, "F_statistic"] <- Lm_F
+  df[i, "Anova_p"] <- Lm_p
+  df[i, "R_squared"] <- Lm_rsq_CI$Rsq
+  df[i, "LCL"] <- Lm_rsq_CI$LCL
+  df[i, "UCL"] <- Lm_rsq_CI$UCL
+  #df[i, "Est_T1"] <- S1Td_stats[1]
+  df[i, "SE_T1"] <- S1Td_stats[2]
+  df[i, "t_T1"] <- S1Td_stats[3]
+  df[i, "p_T1"] <- pairwise_p[1]
+  #df[i, "Est_T2"] <- S2Td_stats[1]
+  df[i, "SE_T2"] <- S2Td_stats[2]
+  df[i, "t_T2"] <- S2Td_stats[3]
+  df[i, "p_T2"] <- pairwise_p[2]
+  #df[i, "Est_12"] <- S1S2_stats[1]
+  df[i, "SE_12"] <- S1S2_stats[2]
+  df[i, "t_12"] <- S1S2_stats[3]
+  df[i, "p_12"] <- pairwise_p[3]
+}
+
+
+
+rownames(df)<- rnames
+
+
+# Add a new sheet to the workbook
+addWorksheet(wb, sheetName = sheet_name)
+
+# Write the data frame to the new sheet, including row index names
+writeData(wb, sheet = sheet_name, x= df,row.names = TRUE,col.names = TRUE)
+
+
+```
+
+
+Average Cortical Thickness
+```{r}
+#Clean up environment
+rm(list=setdiff(ls(),c("subjData","n",'filename','wb')))
+
+
+#Run model
+icvLm <- lm(smri_thick_cdk_mean_b ~ age_b + FEMALE_b + Hydra_k2 + mri_info_deviceserialnumber_b, data=subjData)
+icvLmSumm <- summary(icvLm)
+
+#Run same model with Hydra_k2_reordered to make S2 the comparison group in order to see S1 vs S2 differences in the model.
+icvLm2 <- lm(smri_thick_cdk_mean_b ~ age_b + FEMALE_b + Hydra_k2_reordered + mri_info_deviceserialnumber_b,  data=subjData)
+icvLmSumm2 <- summary(icvLm2)
+
+
+##Pass the results to the anova() function to fit ANOVAs
+#This is your omnibus ANOVA test (tells you if the three groups are significantly different)
+#df1=k-1, df2=n-k
+icvAnova <- anova(icvLm)
+
+
+##Pairwise comparisons
+#Pull uncorrected p-values
+icv_S1vsTd <- summary(icvLm)$coefficients[4,4]
+icv_S2vsTd <- summary(icvLm)$coefficients[5,4]
+icv_S1vsS2 <- summary(icvLm2)$coefficients[4,4]
+
+
+#Combine the pairwise p values
+icv_pairs <- cbind(icv_S1vsTd,icv_S2vsTd,icv_S1vsS2)
+
+#Convert to data frame
+icv_pairs <- as.data.frame(icv_pairs)
+
+##FDR correction across the three pairwise group comparisons (S1vsTd, S2vsTd, and S1vsS2)
+icv_fdr <- p.adjust(icv_pairs[1,],method="fdr")
+
+#Print fdr-corrected p-values to three decimal places
+icv_fdr_round <- round(icv_fdr,3)
+
+```
+Create Tables
+```{r}
+
+# Specify file and sheet names
+sheet_name <- "CT_avg"         
+num_models <- 1
+anova_model = icvAnova
+model = icvLm 
+modelSumm = icvLmSumm
+model_reordered = icvLm2
+modelSumm_reordered = icvLmSumm2
+pairwise_p = icv_fdr_round
+rnames = 'CT_avg'
+var= 4
+
+
+# ANOVA
+Lm_F <- anova_model$`F value`[3]
+Lm_p <- anova_model$`Pr(>F)`[3]
+
+## Confidence intevals
+Lm_rsq_CI <- CI.Rsq(modelSumm$r.squared,n,3,.95)
+Lm_reordered_rsq_CI <- CI.Rsq(modelSumm_reordered$r.squared,n,3,.95)
+
+#Estimate Se T p 
+S1Td_stats <- modelSumm$coefficients[4,]
+S2Td_stats <- modelSumm$coefficients[5,]
+S1S2_stats <- modelSumm_reordered$coefficients[4,]
+
+
+
+df <- data.frame(F_statistic = numeric(num_models),
+                 Anova_p = numeric(num_models), 
+                 #T1
+                 Est_T1 = numeric(num_models), 
+                 SE_T1 = numeric(num_models), 
+                 t_T1 = numeric(num_models), 
+                 p_T1 = numeric(num_models), 
+                 #T2
+                 Est_T2 = numeric(num_models), 
+                 SE_T2 = numeric(num_models), 
+                 t_T2 = numeric(num_models), 
+                 p_T2 = numeric(num_models),
+                 #12
+                 Est_12 = numeric(num_models), 
+                 SE_12 = numeric(num_models), 
+                 t_12 = numeric(num_models), 
+                 p_12 = numeric(num_models),
+                 R_squared = numeric(num_models), 
+                 LCL = numeric(num_models), 
+                 UCL = numeric(num_models))
+
+#Standardize betas
+stBeta = lm.beta(model)
+stBeta_reordered = lm.beta(model_reordered)
+  
+for (i in 1:num_models) {
+  df[i, "Est_T1"] <- stBeta$standardized.coefficients[4]
+  df[i, "Est_T2"] <- stBeta$standardized.coefficients[5]
+  df[i, "Est_12"] <- stBeta_reordered$standardized.coefficients[4]
+  df[i, "F_statistic"] <- Lm_F
+  df[i, "Anova_p"] <- Lm_p
+  #df[i, "Est_T1"] <- S1Td_stats[1]
+  df[i, "SE_T1"] <- S1Td_stats[2]
+  df[i, "t_T1"] <- S1Td_stats[3]
+  df[i, "p_T1"] <- pairwise_p[1]
+  #df[i, "Est_T2"] <- S2Td_stats[1]
+  df[i, "SE_T2"] <- S2Td_stats[2]
+  df[i, "t_T2"] <- S2Td_stats[3]
+  df[i, "p_T2"] <- pairwise_p[2]
+  #df[i, "Est_12"] <- S1S2_stats[1]
+  df[i, "SE_12"] <- S1S2_stats[2]
+  df[i, "t_12"] <- S1S2_stats[3]
+  df[i, "p_12"] <- pairwise_p[3]
+  df[i, "R_squared"] <- Lm_rsq_CI$Rsq
+  df[i, "LCL"] <- Lm_rsq_CI$LCL
+  df[i, "UCL"] <- Lm_rsq_CI$UCL
+}
+
+
+rownames(df)<- rnames
+
+
+#Add a new sheet to the workbook
+addWorksheet(wb, sheetName = sheet_name)
+
+# Write the data frame to the new sheet, including row index names
+writeData(wb, sheet = sheet_name, x= df,row.names = TRUE,col.names = TRUE)
+
+```
+
+
+
+Vol
+```{r}
+#Clean up environment if desired
+rm(list=setdiff(ls(),c("subjData","n",'filename','wb')))
+
+#Get variable names
+
+volRegions <- colnames(subjData[,which(colnames(subjData)=="smri_vol_cdk_banksstslh_b"):which(colnames(subjData)=="smri_vol_cdk_insularh_b")])
+
+
+volLm <- lapply(volRegions,function(x){
+  lm(substitute(i~age_b+FEMALE_b + Hydra_k2 + mri_info_deviceserialnumber_b,list(i = as.name(x))),data = subjData)
+})
+
+
+#Look at model summaries
+volLmSumm <- lapply(volLm, summary)
+
+##Pass the results to the anova() function to fit ANOVAs 
+#These are your omnibus ANOVA tests (tells you if the three groups are significantly different)
+volAnova <- lapply(volLm, anova)
+
+#Pull the p-values
+vol_p <- sapply(volAnova, function(v) v$"Pr(>F)"[3])
+
+
+#Convert to data frame
+vol_p <- as.data.frame(vol_p)
+
+#Add row names for ease of viewing
+rownames(vol_p) <- volRegions
+
+#Print original p-values to three decimal places
+vol_p_round <- round(vol_p,3)
+
+# Pvalues fdr
+
+##FDR correction across all omnibus anova tests
+#FDR correct p-values
+vol_p_fdr <- p.adjust(vol_p[,1],method="fdr")
+
+#Convert to data frame
+vol_p_fdr <- as.data.frame(vol_p_fdr)
+
+#Print fdr-corrected p-values to three decimal places
+vol_p_fdr_round <- round(vol_p_fdr,3)
+
+#Add region names
+volNames <- as.data.frame(volRegions)
+vol_omnibus <- cbind(volNames,vol_p_fdr_round)
+
+#Trim table to only regions that passed FDR correction
+vol_omnibus_signif <- vol_omnibus[vol_p_fdr<0.05,]
+
+
+#Run same model with Hydra_k2_reordered to make S2 the comparison group in order to see S1 vs S2 differences in the model. This model will provide estimates and p-values for S1-S2.
+
+volLm_reordered <- lapply(volRegions,function(x){
+  lm(substitute(i~age_b+FEMALE_b + Hydra_k2_reordered + mri_info_deviceserialnumber_b,list(i = as.name(x))),data = subjData)
+})
+
+
+#Look at model summaries
+volLmSumm_reordered <- lapply(volLm_reordered, summary)
+
+
+##Pairwise comparisons
+#Pull uncorrected p-values
+vol_S1vsTd <- sapply(volLm, function(v) summary(v)$coefficients[4,4])
+vol_S2vsTd <- sapply(volLm, function(v) summary(v)$coefficients[5,4])
+vol_S1vsS2 <- sapply(volLm_reordered, function(v) summary(v)$coefficients[4,4])
+
+#Combine the pairwise p values
+vol_pairs <- cbind(vol_S1vsTd,vol_S2vsTd,vol_S1vsS2)
+
+#Convert to data frame
+vol_pairs <- as.data.frame(vol_pairs)
+
+#Add row names for ease of viewing
+rownames(vol_pairs) <- volRegions
+
+#Print original p-values to three decimal places
+vol_pairs_round <- round(vol_pairs,3)
+
+
+##FDR correction across the three pairwise group comparisons (S1vsTd, S2vsTd, and S1vsS2)
+#Create an empty table for the fdr results
+vol_fdrTable<-as.data.frame(matrix(nrow=68,ncol=3))
+colnames(vol_fdrTable)[1]<-"vol_S1vsTd_pfdr"
+colnames(vol_fdrTable)[2]<-"vol_S2vsTd_pfdr"
+colnames(vol_fdrTable)[3]<-"vol_S1vsS2_pfdr"
+
+#FDR correct across rows
+for(i in 1:nrow(vol_pairs)) {
+    row <- vol_pairs[i,]
+    vol_fdrTable[i,] <- p.adjust(vol_pairs[i,],method="fdr")
+}
+
+#Print fdr-corrected p-values to three decimal places
+vol_fdrTable_round <- round(vol_fdrTable,3)
+
+#Add region names
+vol_pairwise <- cbind(volNames,vol_fdrTable_round)
+
+#Trim table to only regions that passed FDR correction for the omnibus test
+vol_pairwise_signif <- vol_pairwise[vol_p_fdr<0.05,]
+
+
+```
+Create Tables - Vol baseline
+```{r}
+
+# Specify file and sheet names
+sheet_name <- "Cortical_Volume"         
+num_models <- length(volLm)
+anova_model = volAnova
+model = volLm
+modelSumm = volLmSumm
+model_reordered = volLm_reordered
+modelSumm_reordered = volLmSumm_reordered
+pairwise_p = vol_fdrTable_round
+rnames = volRegions
+var = 4 # var = number of variables included in lm model (age, female, bifactors, & site/scanner)
+
+# ANOVA
+Lm_F <- lapply(anova_model, function(x) {(x$`F value`[3])})
+Lm_p <- lapply(anova_model, function(x) {(x$`Pr(>F)`[3])})
+
+
+## Confidence intevals
+Lm_rsq_CI <- lapply(modelSumm, function(x) {CI.Rsq(x$r.squared,n,var,.95)})
+
+#Estimate Se T p 
+S1Td_stats <- lapply(model, function(v) summary(v)$coefficients[4,])
+S2Td_stats <- lapply(model, function(v) summary(v)$coefficients[5,])
+S1S2_stats <- lapply(model_reordered, function(v) summary(v)$coefficients[4,])
+
+
+
+df <- data.frame(F_statistic = numeric(num_models),
+                 Anova_p = numeric(num_models), 
+                 #T1
+                 Est_T1 = numeric(num_models), 
+                 SE_T1 = numeric(num_models), 
+                 t_T1 = numeric(num_models), 
+                 p_T1 = numeric(num_models), 
+                 #T2
+                 Est_T2 = numeric(num_models), 
+                 SE_T2 = numeric(num_models), 
+                 t_T2 = numeric(num_models), 
+                 p_T2 = numeric(num_models),
+                 #12
+                 Est_12 = numeric(num_models), 
+                 SE_12 = numeric(num_models), 
+                 t_12 = numeric(num_models), 
+                 p_12 = numeric(num_models),
+                 R_squared = numeric(num_models), 
+                 LCL = numeric(num_models), 
+                 UCL = numeric(num_models))
+
+#Standardize betas
+stBeta = lapply(model, function(x) {(lm.beta(x))})
+stBeta_reordered = lapply(model_reordered, function(x) {(lm.beta(x))})
+
+for (i in 1:num_models) {
+  df[i, "Est_T1"] <- stBeta[[i]]$standardized.coefficients[4]
+  df[i, "Est_T2"] <- stBeta[[i]]$standardized.coefficients[5]
+  df[i, "Est_12"] <- stBeta_reordered[[i]]$standardized.coefficients[4]
+  df[i, "F_statistic"] <- Lm_F[[i]]
+  df[i, "Anova_p"] <- Lm_p[[i]]
+  df[i, "R_squared"] <- Lm_rsq_CI[[i]]$Rsq
+  df[i, "LCL"] <- Lm_rsq_CI[[i]]$LCL
+  df[i, "UCL"] <- Lm_rsq_CI[[i]]$UCL
+  #df[i, "Est_T1"] <- S1Td_stats[[i]][1]
+  df[i, "SE_T1"] <- S1Td_stats[[i]][2]
+  df[i, "t_T1"] <- S1Td_stats[[i]][3]
+  df[i, "p_T1"] <- NA
+  #df[i, "Est_T2"] <- S2Td_stats[[i]][1]
+  df[i, "SE_T2"] <- S2Td_stats[[i]][2]
+  df[i, "t_T2"] <- S2Td_stats[[i]][3]
+  df[i, "p_T2"] <- NA
+  #df[i, "Est_12"] <- S1S2_stats[[i]][1]
+  df[i, "SE_12"] <- S1S2_stats[[i]][2]
+  df[i, "t_12"] <- S1S2_stats[[i]][3]
+  df[i, "p_12"] <- NA
+}
+
+
+df['p_T1']<-  pairwise_p[1]
+df['p_T2']<-  pairwise_p[2]
+df['p_12']<-  pairwise_p[3]
+
+rownames(df)<- rnames
+
+# Add a new sheet to the workbook
+addWorksheet(wb, sheetName = sheet_name)
+
+# Write the data frame to the new sheet, including row index names
+writeData(wb, sheet = sheet_name, x= df,row.names = TRUE,col.names = TRUE)
+
+
+```
+
+
+Subcortical Vol
+```{r}
+#Clean up environment
+rm(list=setdiff(ls(),c("subjData","n",'filename','wb')))
+
+#Get variable names
+svolRegions <- c("smri_vol_scs_crbcortexlh_b",	"smri_vol_scs_tplh_b",	"smri_vol_scs_caudatelh_b",	"smri_vol_scs_putamenlh_b",	"smri_vol_scs_pallidumlh_b",	"smri_vol_scs_bstem_b",	"smri_vol_scs_hpuslh_b",	"smri_vol_scs_amygdalalh_b",	"smri_vol_scs_aal_b",	"smri_vol_scs_vedclh_b",	"smri_vol_scs_crbcortexrh_b",	"smri_vol_scs_tprh_b",	"smri_vol_scs_caudaterh_b",	"smri_vol_scs_putamenrh_b",	"smri_vol_scs_pallidumrh_b",	"smri_vol_scs_hpusrh_b",	"smri_vol_scs_amygdalarh_b",	"smri_vol_scs_aar_b",	"smri_vol_scs_vedcrh_b")
+
+
+
+##Run models (all three groups included).
+#TD is the comparison group in Hydra_k2. This model will provide estimates and p-values for TD vs. S1 and TD vs. S2.
+
+svolLm <- lapply(svolRegions, function(x) {
+  lm(substitute(i ~ age_b + FEMALE_b + Hydra_k2 + mri_info_deviceserialnumber_b, list(i = as.name(x))), data=subjData)
+})
+
+
+#Look at model summaries
+svolLmSumm <- lapply(svolLm, summary)
+
+##Pass the results to the anova() function to fit ANOVAs
+#These are your omnibus ANOVA tests (tells you if the three groups are significantly different)
+svolAnova <- lapply(svolLm, anova)
+
+#Pull the p-values
+svol_p <- sapply(svolAnova, function(v) v$"Pr(>F)"[3])
+
+#Convert to data frame
+svol_p <- as.data.frame(svol_p)
+
+#Add row names for ease of viewing
+rownames(svol_p) <- svolRegions
+
+#Print original p-values to three decimal places
+svol_p_round <- round(svol_p,3)
+
+
+
+##FDR correction across all omnibus anova tests
+#FDR correct p-values
+svol_p_fdr <- p.adjust(svol_p[,1],method="fdr")
+
+#Convert to data frame
+svol_p_fdr <- as.data.frame(svol_p_fdr)
+
+#Print fdr-corrected p-values to three decimal places
+svol_p_fdr_round <- round(svol_p_fdr,3)
+
+#Add region names
+svolNames <- as.data.frame(svolRegions)
+svol_omnibus <- cbind(svolNames,svol_p_fdr_round)
+
+#Trim table to only regions that passed FDR correction
+svol_omnibus_signif <- svol_omnibus[svol_p_fdr<0.05,]
+
+#Run same model with Hydra_k2_reordered to make S2 the comparison group in order to see S1 vs S2 differences in the model. This model will provide estimates and p-values for S1-S2.
+
+svolLm_reordered <- lapply(svolRegions, function(x) {
+ lm(substitute(i ~ age_b + FEMALE_b + Hydra_k2_reordered + mri_info_deviceserialnumber_b, list(i = as.name(x))),data=subjData)})
+
+
+#Look at model summaries
+svolLmSumm_reordered <- lapply(svolLm_reordered, summary)
+
+
+##Pairwise comparisons
+#Pull uncorrected p-values
+svol_S1vsTd <- sapply(svolLm, function(v) summary(v)$coefficients[4,4])
+svol_S2vsTd <- sapply(svolLm, function(v) summary(v)$coefficients[5,4])
+svol_S1vsS2 <- sapply(svolLm_reordered, function(v) summary(v)$coefficients[4,4])
+
+
+#Combine the pairwise p values
+svol_pairs <- cbind(svol_S1vsTd,svol_S2vsTd,svol_S1vsS2)
+
+#Convert to data frame
+svol_pairs <- as.data.frame(svol_pairs)
+
+#Add row names for ease of viewing
+rownames(svol_pairs) <- svolRegions
+
+#Print original p-values to three decimal places
+svol_pairs_round <- round(svol_pairs,3)
+
+
+##FDR correction across the three pairwise group comparisons (S1vsTd, S2vsTd, and S1vsS2)
+#Create an empty table for the fdr results
+svol_fdrTable<-as.data.frame(matrix(nrow=19,ncol=3))
+colnames(svol_fdrTable)[1]<-"svol_S1vsTd_pfdr"
+colnames(svol_fdrTable)[2]<-"svol_S2vsTd_pfdr"
+colnames(svol_fdrTable)[3]<-"svol_S1vsS2_pfdr"
+
+#FDR correct across rows
+for(i in 1:nrow(svol_pairs)) {
+    row <- svol_pairs[i,]
+    svol_fdrTable[i,] <- p.adjust(svol_pairs[i,],method="fdr")
+}
+
+#Print fdr-corrected p-values to three decimal places
+svol_fdrTable_round <- round(svol_fdrTable,3)
+
+#Add region names
+svol_pairwise <- cbind(svolNames,svol_fdrTable_round)
+
+#Trim table to only regions that passed FDR correction for the omnibus test
+svol_pairwise_signif <- svol_pairwise[svol_p_fdr<0.05,]
+
+
+```
+Create Tables - subcortical 
+```{r}
+
+# Specify file and sheet names
+sheet_name <- "Subcortical_Volume"         
+num_models <- length(svolLm)
+anova_model = svolAnova
+model = svolLm
+modelSumm = svolLmSumm
+model_reordered = svolLm_reordered
+modelSumm_reordered = svolLmSumm_reordered
+pairwise_p = svol_fdrTable_round
+rnames = svolRegions
+var = 4 # var = number of variables included in lm model (age, female, bifactors, & site/scanner)
+
+# ANOVA
+Lm_F <- lapply(anova_model, function(x) {(x$`F value`[3])})
+Lm_p <- lapply(anova_model, function(x) {(x$`Pr(>F)`[3])})
+
+
+## Confidence intevals
+Lm_rsq_CI <- lapply(modelSumm, function(x) {CI.Rsq(x$r.squared,n,var,.95)})
+
+#Estimate Se T p 
+S1Td_stats <- lapply(model, function(v) summary(v)$coefficients[4,])
+S2Td_stats <- lapply(model, function(v) summary(v)$coefficients[5,])
+S1S2_stats <- lapply(model_reordered, function(v) summary(v)$coefficients[4,])
+
+
+
+df <- data.frame(F_statistic = numeric(num_models),
+                 Anova_p = numeric(num_models), 
+                 #T1
+                 Est_T1 = numeric(num_models), 
+                 SE_T1 = numeric(num_models), 
+                 t_T1 = numeric(num_models), 
+                 p_T1 = numeric(num_models), 
+                 #T2
+                 Est_T2 = numeric(num_models), 
+                 SE_T2 = numeric(num_models), 
+                 t_T2 = numeric(num_models), 
+                 p_T2 = numeric(num_models),
+                 #12
+                 Est_12 = numeric(num_models), 
+                 SE_12 = numeric(num_models), 
+                 t_12 = numeric(num_models), 
+                 p_12 = numeric(num_models),
+                 R_squared = numeric(num_models), 
+                 LCL = numeric(num_models), 
+                 UCL = numeric(num_models) 
+              )
+
+#Standardize betas
+stBeta = lapply(model, function(x) {(lm.beta(x))})
+stBeta_reordered = lapply(model_reordered, function(x) {(lm.beta(x))})
+
+for (i in 1:num_models) {
+  df[i, "Est_T1"] <- stBeta[[i]]$standardized.coefficients[4]
+  df[i, "Est_T2"] <- stBeta[[i]]$standardized.coefficients[5]
+  df[i, "Est_12"] <- stBeta_reordered[[i]]$standardized.coefficients[4]
+  df[i, "F_statistic"] <- Lm_F[[i]]
+  df[i, "Anova_p"] <- Lm_p[[i]]
+  df[i, "R_squared"] <- Lm_rsq_CI[[i]]$Rsq
+  df[i, "LCL"] <- Lm_rsq_CI[[i]]$LCL
+  df[i, "UCL"] <- Lm_rsq_CI[[i]]$UCL
+  #df[i, "Est_T1"] <- S1Td_stats[[i]][1]
+  df[i, "SE_T1"] <- S1Td_stats[[i]][2]
+  df[i, "t_T1"] <- S1Td_stats[[i]][3]
+  df[i, "p_T1"] <- NA
+  #df[i, "Est_T2"] <- S2Td_stats[[i]][1]
+  df[i, "SE_T2"] <- S2Td_stats[[i]][2]
+  df[i, "t_T2"] <- S2Td_stats[[i]][3]
+  df[i, "p_T2"] <- NA
+  #df[i, "Est_12"] <- S1S2_stats[[i]][1]
+  df[i, "SE_12"] <- S1S2_stats[[i]][2]
+  df[i, "t_12"] <- S1S2_stats[[i]][3]
+  df[i, "p_12"] <- NA
+}
+
+
+df['p_T1']<-  pairwise_p[1]
+df['p_T2']<-  pairwise_p[2]
+df['p_12']<-  pairwise_p[3]
+
+rownames(df)<- rnames
+
+# Add a new sheet to the workbook
+addWorksheet(wb, sheetName = sheet_name)
+
+# Write the data frame to the new sheet, including row index names
+writeData(wb, sheet = sheet_name, x= df,row.names = TRUE,col.names = TRUE)
+
+```
+
+
+
+
+CT 
+```{r}
+#Clean environment if desired
+rm(list=setdiff(ls(),c("subjData","n",'filename','wb')))
+
+#Get variable names
+volRegions <- colnames(subjData[,which(colnames(subjData)=="smri_thick_cdk_banksstslh_b"):which(colnames(subjData)=="smri_thick_cdk_insularh_b")])
+
+
+volLm <- lapply(volRegions,function(x){
+  lm(substitute(i~age_b+FEMALE_b + Hydra_k2 + mri_info_deviceserialnumber_b,list(i = as.name(x))),data = subjData)
+})
+
+
+#Look at model summaries
+volLmSumm <- lapply(volLm, summary)
+
+##Pass the results to the anova() function to fit ANOVAs 
+#These are your omnibus ANOVA tests (tells you if the three groups are significantly different)
+volAnova <- lapply(volLm, anova)
+
+#Pull the p-values
+vol_p <- sapply(volAnova, function(v) v$"Pr(>F)"[3])
+
+
+#Convert to data frame
+vol_p <- as.data.frame(vol_p)
+
+#Add row names for ease of viewing
+rownames(vol_p) <- volRegions
+
+#Print original p-values to three decimal places
+vol_p_round <- round(vol_p,3)
+
+
+
+##FDR correction across all omnibus anova tests
+#FDR correct p-values
+vol_p_fdr <- p.adjust(vol_p[,1],method="fdr")
+
+#Convert to data frame
+vol_p_fdr <- as.data.frame(vol_p_fdr)
+
+#Print fdr-corrected p-values to three decimal places
+vol_p_fdr_round <- round(vol_p_fdr,3)
+
+#Add region names
+volNames <- as.data.frame(volRegions)
+vol_omnibus <- cbind(volNames,vol_p_fdr_round)
+
+#Trim table to only regions that passed FDR correction
+vol_omnibus_signif <- vol_omnibus[vol_p_fdr<0.05,]
+
+
+#Run same model with Hydra_k2_reordered to make S2 the comparison group in order to see S1 vs S2 differences in the model. This model will provide estimates and p-values for S1-S2.
+
+volLm_reordered <- lapply(volRegions,function(x){
+  lm(substitute(i~age_b+FEMALE_b + Hydra_k2_reordered + mri_info_deviceserialnumber_b,list(i = as.name(x))),data = subjData)
+})
+
+
+#Look at model summaries
+volLmSumm_reordered <- lapply(volLm_reordered, summary)
+
+
+##Pairwise comparisons
+#Pull uncorrected p-values
+vol_S1vsTd <- sapply(volLm, function(v) summary(v)$coefficients[4,4])
+vol_S2vsTd <- sapply(volLm, function(v) summary(v)$coefficients[5,4])
+vol_S1vsS2 <- sapply(volLm_reordered, function(v) summary(v)$coefficients[4,4])
+
+#Combine the pairwise p values
+vol_pairs <- cbind(vol_S1vsTd,vol_S2vsTd,vol_S1vsS2)
+
+#Convert to data frame
+vol_pairs <- as.data.frame(vol_pairs)
+
+#Add row names for ease of viewing
+rownames(vol_pairs) <- volRegions
+
+#Print original p-values to three decimal places
+vol_pairs_round <- round(vol_pairs,3)
+
+
+##FDR correction across the three pairwise group comparisons (S1vsTd, S2vsTd, and S1vsS2)
+#Create an empty table for the fdr results
+vol_fdrTable<-as.data.frame(matrix(nrow=68,ncol=3))
+colnames(vol_fdrTable)[1]<-"vol_S1vsTd_pfdr"
+colnames(vol_fdrTable)[2]<-"vol_S2vsTd_pfdr"
+colnames(vol_fdrTable)[3]<-"vol_S1vsS2_pfdr"
+
+#FDR correct across rows
+for(i in 1:nrow(vol_pairs)) {
+    row <- vol_pairs[i,]
+    vol_fdrTable[i,] <- p.adjust(vol_pairs[i,],method="fdr")
+}
+
+#Print fdr-corrected p-values to three decimal places
+vol_fdrTable_round <- round(vol_fdrTable,3)
+
+#Add region names
+vol_pairwise <- cbind(volNames,vol_fdrTable_round)
+
+#Trim table to only regions that passed FDR correction for the omnibus test
+vol_pairwise_signif <- vol_pairwise[vol_p_fdr<0.05,]
+
+
+```
+Create Tables - CT baseline
+```{r}
+
+# Specify file and sheet names
+sheet_name <- "Cortical_Thickness"         
+num_models <- length(volLm)
+anova_model = volAnova
+model = volLm
+modelSumm = volLmSumm
+model_reordered = volLm_reordered
+modelSumm_reordered = volLmSumm_reordered
+pairwise_p = vol_fdrTable_round
+rnames = volRegions
+var = 4 # var = number of variables included in lm model (age, female, bifactors, & site/scanner)
+
+# ANOVA
+Lm_F <- lapply(anova_model, function(x) {(x$`F value`[3])})
+Lm_p <- lapply(anova_model, function(x) {(x$`Pr(>F)`[3])})
+
+
+## Confidence intevals
+Lm_rsq_CI <- lapply(modelSumm, function(x) {CI.Rsq(x$r.squared,n,var,.95)})
+
+#Estimate Se T p 
+S1Td_stats <- lapply(model, function(v) summary(v)$coefficients[4,])
+S2Td_stats <- lapply(model, function(v) summary(v)$coefficients[5,])
+S1S2_stats <- lapply(model_reordered, function(v) summary(v)$coefficients[4,])
+
+
+
+df <- data.frame(F_statistic = numeric(num_models),
+                 Anova_p = numeric(num_models), 
+                 #T1
+                 Est_T1 = numeric(num_models), 
+                 SE_T1 = numeric(num_models), 
+                 t_T1 = numeric(num_models), 
+                 p_T1 = numeric(num_models), 
+                 #T2
+                 Est_T2 = numeric(num_models), 
+                 SE_T2 = numeric(num_models), 
+                 t_T2 = numeric(num_models), 
+                 p_T2 = numeric(num_models),
+                 #12
+                 Est_12 = numeric(num_models), 
+                 SE_12 = numeric(num_models), 
+                 t_12 = numeric(num_models), 
+                 p_12 = numeric(num_models),
+                 R_squared = numeric(num_models), 
+                 LCL = numeric(num_models), 
+                 UCL = numeric(num_models))
+
+
+#Standardize betas
+stBeta = lapply(model, function(x) {(lm.beta(x))})
+stBeta_reordered = lapply(model_reordered, function(x) {(lm.beta(x))})
+
+for (i in 1:num_models) {
+  df[i, "Est_T1"] <- stBeta[[i]]$standardized.coefficients[4]
+  df[i, "Est_T2"] <- stBeta[[i]]$standardized.coefficients[5]
+  df[i, "Est_12"] <- stBeta_reordered[[i]]$standardized.coefficients[4]
+  df[i, "F_statistic"] <- Lm_F[[i]]
+  df[i, "Anova_p"] <- Lm_p[[i]]
+  df[i, "R_squared"] <- Lm_rsq_CI[[i]]$Rsq
+  df[i, "LCL"] <- Lm_rsq_CI[[i]]$LCL
+  df[i, "UCL"] <- Lm_rsq_CI[[i]]$UCL
+  #df[i, "Est_T1"] <- S1Td_stats[[i]][1]
+  df[i, "SE_T1"] <- S1Td_stats[[i]][2]
+  df[i, "t_T1"] <- S1Td_stats[[i]][3]
+  df[i, "p_T1"] <- NA
+  #df[i, "Est_T2"] <- S2Td_stats[[i]][1]
+  df[i, "SE_T2"] <- S2Td_stats[[i]][2]
+  df[i, "t_T2"] <- S2Td_stats[[i]][3]
+  df[i, "p_T2"] <- NA
+  #df[i, "Est_12"] <- S1S2_stats[[i]][1]
+  df[i, "SE_12"] <- S1S2_stats[[i]][2]
+  df[i, "t_12"] <- S1S2_stats[[i]][3]
+  df[i, "p_12"] <- NA
+}
+
+
+df['p_T1']<-  pairwise_p[1]
+df['p_T2']<-  pairwise_p[2]
+df['p_12']<-  pairwise_p[3]
+
+rownames(df)<- rnames
+
+
+# Add a new sheet to the workbook
+addWorksheet(wb, sheetName = sheet_name)
+
+# Write the data frame to the new sheet, including row index names
+writeData(wb, sheet = sheet_name, x= df,row.names = TRUE,col.names = TRUE)
+```
+
+
+
+
+############################## NEURAL YEAR 2  #################################
+
+
+Total gray matter volume 2
+```{r}
+# Clean up environment if desired
+rm(list=setdiff(ls(),c("subjData","n",'filename','wb')))
+
+#Divide total gray matter volume by 1000 to change the units from cubic millimeters (mm3) to cubic centimeters (cc3); 1 cc3 = 1,000 mm3
+subjData$smri_vol_cdk_total_2_1000 <- subjData$smri_vol_cdk_total_2/1000
+
+#Run model
+totGrayLm <- lm(smri_vol_cdk_total_2_1000 ~ age_2 + FEMALE_b  + Hydra_k2 + mri_info_deviceserialnumber_b, data=subjData)
+totGrayLmSumm <- summary(totGrayLm)
+
+
+#Run same model with Hydra_k2_reordered to make S2 the comparison group in order to see S1 vs S2 differences in the model.
+totGrayLm2 <- lm(smri_vol_cdk_total_2_1000 ~ age_2 + FEMALE_b  + Hydra_k2_reordered + mri_info_deviceserialnumber_b, data=subjData)
+totGrayLmSumm2 <- summary(totGrayLm2)
+
+
+##Pass the results to the anova() function to fit ANOVAs
+#This is your omnibus ANOVA test (tells you if the three groups are significantly different)
+#df1=k-1, df2=n-k
+totGrayAnova <- anova(totGrayLm)
+
+##Pairwise comparisons
+#Pull uncorrected p-values
+totGray_S1vsTd <- summary(totGrayLm)$coefficients[4,4]
+totGray_S2vsTd <- summary(totGrayLm)$coefficients[5,4]
+totGray_S1vsS2 <- summary(totGrayLm2)$coefficients[4,4]
+
+
+#Combine the pairwise p values
+totGray_pairs <- cbind(totGray_S1vsTd,totGray_S2vsTd,totGray_S1vsS2)
+
+#Convert to data frame
+totGray_pairs <- as.data.frame(totGray_pairs)
+
+##FDR correction across the three pairwise group comparisons (S1vsTd, S2vsTd, and S1vsS2)
+totGray_fdr <- p.adjust(totGray_pairs[1,],method="fdr")
+
+#Print fdr-corrected p-values to three decimal places
+totGray_fdr_round <- data.frame(round(totGray_fdr,3))
+
+```
+Create Tables - TGMV
+```{r}
+
+# Specify file and sheet names
+sheet_name <- "Total_GMV_2"         
+num_models <- 1
+anova_model = totGrayAnova
+model = totGrayLm 
+modelSumm = totGrayLmSumm
+model_reordered = totGrayLm2
+modelSumm_reordered = totGrayLmSumm2
+pairwise_p = totGray_fdr_round
+rnames = 'Total GMV_2'
+var = 4 # var = number of variables included in lm model (age, female, bifactors, & site/scanner)
+
+
+# ANOVA
+Lm_F <- anova_model$`F value`[3]
+Lm_p <- anova_model$`Pr(>F)`[3]
+
+## Confidence intevals
+Lm_rsq_CI <- CI.Rsq(modelSumm$r.squared,n,var,.95)
+
+
+#Estimate Se T p 
+S1Td_stats <- modelSumm$coefficients[4,]
+S2Td_stats <- modelSumm$coefficients[5,]
+S1S2_stats <- modelSumm_reordered$coefficients[4,]
+
+
+
+df <- data.frame(F_statistic = numeric(num_models),
+                 Anova_p = numeric(num_models), 
+                 #T1
+                 Est_T1 = numeric(num_models), 
+                 SE_T1 = numeric(num_models), 
+                 t_T1 = numeric(num_models), 
+                 p_T1 = numeric(num_models), 
+                 #T2
+                 Est_T2 = numeric(num_models), 
+                 SE_T2 = numeric(num_models), 
+                 t_T2 = numeric(num_models), 
+                 p_T2 = numeric(num_models),
+                 #12
+                 Est_12 = numeric(num_models), 
+                 SE_12 = numeric(num_models), 
+                 t_12 = numeric(num_models), 
+                 p_12 = numeric(num_models),
+                 R_squared = numeric(num_models), 
+                 LCL = numeric(num_models), 
+                 UCL = numeric(num_models)
+                )
+
+
+#Standardize betas
+stBeta = lm.beta(model)
+stBeta_reordered = lm.beta(model_reordered)
+  
+for (i in 1:num_models) {
+  df[i, "Est_T1"] <- stBeta$standardized.coefficients[4]
+  df[i, "Est_T2"] <- stBeta$standardized.coefficients[5]
+  df[i, "Est_12"] <- stBeta_reordered$standardized.coefficients[4]
+  df[i, "F_statistic"] <- Lm_F
+  df[i, "Anova_p"] <- Lm_p
+  #df[i, "Est_T1"] <- S1Td_stats[1]
+  df[i, "SE_T1"] <- S1Td_stats[2]
+  df[i, "t_T1"] <- S1Td_stats[3]
+  df[i, "p_T1"] <- pairwise_p[1,1]
+  #df[i, "Est_T2"] <- S2Td_stats[1]
+  df[i, "SE_T2"] <- S2Td_stats[2]
+  df[i, "t_T2"] <- S2Td_stats[3]
+  df[i, "p_T2"] <- pairwise_p[2,1]
+  #df[i, "Est_12"] <- S1S2_stats[1]
+  df[i, "SE_12"] <- S1S2_stats[2]
+  df[i, "t_12"] <- S1S2_stats[3]
+  df[i, "p_12"] <- pairwise_p[3,1]
+  df[i, "R_squared"] <- Lm_rsq_CI$Rsq
+  df[i, "LCL"] <- Lm_rsq_CI$LCL
+  df[i, "UCL"] <- Lm_rsq_CI$UCL
+  
+}
+
+
+
+rownames(df)<- rnames
+
+
+# Add a new sheet to the workbook
+addWorksheet(wb, sheetName = sheet_name)
+
+# Write the data frame to the new sheet, including row index names
+writeData(wb, sheet = sheet_name, x= df,row.names = TRUE,col.names = TRUE)
+
+```
+
+
+ICV2
+```{r}
+# Clean up environment if desired
+rm(list=setdiff(ls(),c("subjData","n",'filename','wb')))
+
+#Divide ICV by 1000 to change the units from cubic millimeters (mm3) to cubic centimeters (cc3); 1 cc3 = 1,000 mm3
+subjData$TICV_2_1000 <- subjData$TICV_2/1000
+
+#Run model
+icvLm <- lm(TICV_2_1000 ~ age_2 + FEMALE_b + Hydra_k2 + mri_info_deviceserialnumber_b, data=subjData)
+icvLmSumm <- summary(icvLm)
+
+#Run same model with Hydra_k2_reordered to make S2 the comparison group in order to see S1 vs S2 differences in the model.
+icvLm2 <- lm(TICV_2_1000 ~ age_2 + FEMALE_b + Hydra_k2_reordered + mri_info_deviceserialnumber_b,  data=subjData)
+icvLmSumm2 <- summary(icvLm2)
+
+
+##Pass the results to the anova() function to fit ANOVAs
+#This is your omnibus ANOVA test (tells you if the three groups are significantly different)
+#df1=k-1, df2=n-k
+icvAnova <- anova(icvLm)
+
+##Pairwise comparisons
+#Pull uncorrected p-values
+icv_S1vsTd <- summary(icvLm)$coefficients[4,4]
+icv_S2vsTd <- summary(icvLm)$coefficients[5,4]
+icv_S1vsS2 <- summary(icvLm2)$coefficients[4,4]
+
+
+#Combine the pairwise p values
+icv_pairs <- cbind(icv_S1vsTd,icv_S2vsTd,icv_S1vsS2)
+
+#Convert to data frame
+icv_pairs <- as.data.frame(icv_pairs)
+
+##FDR correction across the three pairwise group comparisons (S1vsTd, S2vsTd, and S1vsS2)
+icv_fdr <- p.adjust(icv_pairs[1,],method="fdr")
+
+#Print fdr-corrected p-values to three decimal places
+icv_fdr_round <- round(icv_fdr,3)
+
+```
+Create Tables - ICV
+```{r}
+
+# Specify file and sheet names
+sheet_name <- "TICV_2"         
+num_models <- 1
+anova_model = icvAnova
+model = icvLm 
+modelSumm = icvLmSumm
+model_reordered = icvLm2
+modelSumm_reordered = icvLmSumm2
+pairwise_p = icv_fdr_round
+rnames = 'TICV_2'
+var = 4 # var = number of variables included in lm model (age, female, bifactors, & site/scanner)
+
+
+# ANOVA
+Lm_F <- anova_model$`F value`[3]
+Lm_p <- anova_model$`Pr(>F)`[3]
+
+## Confidence intevals
+Lm_rsq_CI <- CI.Rsq(modelSumm$r.squared,n,var,.95)
+
+
+#Estimate Se T p 
+S1Td_stats <- modelSumm$coefficients[4,]
+S2Td_stats <- modelSumm$coefficients[5,]
+S1S2_stats <- modelSumm_reordered$coefficients[4,]
+
+
+
+df <- data.frame(F_statistic = numeric(num_models),
+                 Anova_p = numeric(num_models), 
+                 #T1
+                 Est_T1 = numeric(num_models), 
+                 SE_T1 = numeric(num_models), 
+                 t_T1 = numeric(num_models), 
+                 p_T1 = numeric(num_models), 
+                 #T2
+                 Est_T2 = numeric(num_models), 
+                 SE_T2 = numeric(num_models), 
+                 t_T2 = numeric(num_models), 
+                 p_T2 = numeric(num_models),
+                 #12
+                 Est_12 = numeric(num_models), 
+                 SE_12 = numeric(num_models), 
+                 t_12 = numeric(num_models), 
+                 p_12 = numeric(num_models),
+                 R_squared = numeric(num_models), 
+                 LCL = numeric(num_models), 
+                 UCL = numeric(num_models)
+                )
+
+
+
+#Standardize betas
+stBeta = lm.beta(model)
+stBeta_reordered = lm.beta(model_reordered)
+  
+for (i in 1:num_models) {
+  df[i, "Est_T1"] <- stBeta$standardized.coefficients[4]
+  df[i, "Est_T2"] <- stBeta$standardized.coefficients[5]
+  df[i, "Est_12"] <- stBeta_reordered$standardized.coefficients[4]
+  df[i, "F_statistic"] <- Lm_F
+  df[i, "Anova_p"] <- Lm_p
+  #df[i, "Est_T1"] <- S1Td_stats[1]
+  df[i, "SE_T1"] <- S1Td_stats[2]
+  df[i, "t_T1"] <- S1Td_stats[3]
+  #df[i, "p_T1"] <- S1Td_stats[[i]][4]
+  df[i, "p_T1"] <- pairwise_p[1]
+  #df[i, "Est_T2"] <- S2Td_stats[1]
+  df[i, "SE_T2"] <- S2Td_stats[2]
+  df[i, "t_T2"] <- S2Td_stats[3]
+  df[i, "p_T2"] <- pairwise_p[2]
+  #df[i, "Est_12"] <- S1S2_stats[1]
+  df[i, "SE_12"] <- S1S2_stats[2]
+  df[i, "t_12"] <- S1S2_stats[3]
+  df[i, "p_12"] <- pairwise_p[3]
+  df[i, "R_squared"] <- Lm_rsq_CI$Rsq
+  df[i, "LCL"] <- Lm_rsq_CI$LCL
+  df[i, "UCL"] <- Lm_rsq_CI$UCL
+  
+}
+
+
+
+rownames(df)<- rnames
+
+
+# Add a new sheet to the workbook
+addWorksheet(wb, sheetName = sheet_name)
+
+# Write the data frame to the new sheet, including row index names
+writeData(wb, sheet = sheet_name, x= df,row.names = TRUE,col.names = TRUE)
+
+```
+
+
+Cortical Thickness 2
+```{r}
+# Clean up environment if desired 
+rm(list=setdiff(ls(),c("subjData","n",'filename','wb')))
+
+icvLm <- lm(smri_thick_cdk_mean_2 ~ age_2 + FEMALE_b + Hydra_k2 + mri_info_deviceserialnumber_b, data=subjData)
+icvLmSumm <- summary(icvLm)
+
+#Run same model with Hydra_k2_reordered to make S2 the comparison group in order to see S1 vs S2 differences in the model.
+icvLm2 <- lm(smri_thick_cdk_mean_2 ~ age_2 + FEMALE_b + Hydra_k2_reordered + mri_info_deviceserialnumber_b,  data=subjData)
+icvLmSumm2 <- summary(icvLm2)
+
+
+##Pass the results to the anova() function to fit ANOVAs
+#This is your omnibus ANOVA test (tells you if the three groups are significantly different)
+#df1=k-1, df2=n-k
+icvAnova <- anova(icvLm)
+
+
+##Pairwise comparisons
+#Pull uncorrected p-values
+icv_S1vsTd <- summary(icvLm)$coefficients[4,4]
+icv_S2vsTd <- summary(icvLm)$coefficients[5,4]
+icv_S1vsS2 <- summary(icvLm2)$coefficients[4,4]
+
+
+#Combine the pairwise p values
+icv_pairs <- cbind(icv_S1vsTd,icv_S2vsTd,icv_S1vsS2)
+
+#Convert to data frame
+icv_pairs <- as.data.frame(icv_pairs)
+
+##FDR correction across the three pairwise group comparisons (S1vsTd, S2vsTd, and S1vsS2)
+icv_fdr <- p.adjust(icv_pairs[1,],method="fdr")
+
+#Print fdr-corrected p-values to three decimal places
+icv_fdr_round <- round(icv_fdr,3)
+
+```
+Create Tables - CT 2
+```{r}
+
+# Specify file and sheet names
+sheet_name <- "CT_avg_2"         
+num_models <- 1
+anova_model = icvAnova
+model = icvLm 
+modelSumm = icvLmSumm
+model_reordered = icvLm2
+modelSumm_reordered = icvLmSumm2
+pairwise_p = icv_fdr_round
+rnames = 'CT_avg_2'
+var = 4 # var = number of variables included in lm model (age, female, bifactors, & site/scanner)
+
+
+# ANOVA
+Lm_F <- anova_model$`F value`[3]
+Lm_p <- anova_model$`Pr(>F)`[3]
+
+## Confidence intevals
+Lm_rsq_CI <- CI.Rsq(modelSumm$r.squared,n,var,.95)
+
+
+#Estimate Se T p 
+S1Td_stats <- modelSumm$coefficients[4,]
+S2Td_stats <- modelSumm$coefficients[5,]
+S1S2_stats <- modelSumm_reordered$coefficients[4,]
+
+
+
+df <- data.frame(F_statistic = numeric(num_models),
+                 Anova_p = numeric(num_models), 
+                 #T1
+                 Est_T1 = numeric(num_models), 
+                 SE_T1 = numeric(num_models), 
+                 t_T1 = numeric(num_models), 
+                 p_T1 = numeric(num_models), 
+                 #T2
+                 Est_T2 = numeric(num_models), 
+                 SE_T2 = numeric(num_models), 
+                 t_T2 = numeric(num_models), 
+                 p_T2 = numeric(num_models),
+                 #12
+                 Est_12 = numeric(num_models), 
+                 SE_12 = numeric(num_models), 
+                 t_12 = numeric(num_models), 
+                 p_12 = numeric(num_models),
+                 R_squared = numeric(num_models), 
+                 LCL = numeric(num_models), 
+                 UCL = numeric(num_models)
+                )
+
+
+
+#Standardize betas
+stBeta = lm.beta(model)
+stBeta_reordered = lm.beta(model_reordered)
+  
+for (i in 1:num_models) {
+  df[i, "Est_T1"] <- stBeta$standardized.coefficients[4]
+  df[i, "Est_T2"] <- stBeta$standardized.coefficients[5]
+  df[i, "Est_12"] <- stBeta_reordered$standardized.coefficients[4]
+  df[i, "F_statistic"] <- Lm_F
+  df[i, "Anova_p"] <- Lm_p
+  #df[i, "Est_T1"] <- S1Td_stats[1]
+  df[i, "SE_T1"] <- S1Td_stats[2]
+  df[i, "t_T1"] <- S1Td_stats[3]
+  df[i, "p_T1"] <- pairwise_p[1]
+  #df[i, "Est_T2"] <- S2Td_stats[1]
+  df[i, "SE_T2"] <- S2Td_stats[2]
+  df[i, "t_T2"] <- S2Td_stats[3]
+  df[i, "p_T2"] <- pairwise_p[2]
+  #df[i, "Est_12"] <- S1S2_stats[1]
+  df[i, "SE_12"] <- S1S2_stats[2]
+  df[i, "t_12"] <- S1S2_stats[3]
+  df[i, "p_12"] <- pairwise_p[3]
+  df[i, "R_squared"] <- Lm_rsq_CI$Rsq
+  df[i, "LCL"] <- Lm_rsq_CI$LCL
+  df[i, "UCL"] <- Lm_rsq_CI$UCL
+  
+}
+
+
+rownames(df)<- rnames
+
+
+# Add a new sheet to the workbook
+addWorksheet(wb, sheetName = sheet_name)
+
+# Write the data frame to the new sheet, including row index names
+writeData(wb, sheet = sheet_name, x= df,row.names = TRUE,col.names = TRUE)
+
+```
+
+
+Vol - Year 2 
+```{r}
+# Clean up environment if desired
+rm(list=setdiff(ls(),c("subjData","n",'filename','wb')))
+
+#Get variable names
+
+volRegions <- colnames(subjData[,which(colnames(subjData)=="smri_vol_cdk_banksstslh_2"):which(colnames(subjData)=="smri_vol_cdk_insularh_2")])
+
+
+volLm <- lapply(volRegions,function(x){
+  lm(substitute(i~age_2+FEMALE_b + Hydra_k2 + mri_info_deviceserialnumber_b,list(i = as.name(x))),data = subjData)
+})
+
+
+#Look at model summaries
+volLmSumm <- lapply(volLm, summary)
+
+##Pass the results to the anova() function to fit ANOVAs
+#These are your omnibus ANOVA tests (tells you if the three groups are significantly different)
+volAnova <- lapply(volLm, anova)
+
+#Pull the p-values
+vol_p <- sapply(volAnova, function(v) v$"Pr(>F)"[3])
+
+
+#Convert to data frame
+vol_p <- as.data.frame(vol_p)
+
+#Add row names for ease of viewing
+rownames(vol_p) <- volRegions
+
+#Print original p-values to three decimal places
+vol_p_round <- round(vol_p,3)
+
+
+
+##FDR correction across all omnibus anova tests
+#FDR correct p-values
+vol_p_fdr <- p.adjust(vol_p[,1],method="fdr")
+
+#Convert to data frame
+vol_p_fdr <- as.data.frame(vol_p_fdr)
+
+#Print fdr-corrected p-values to three decimal places
+vol_p_fdr_round <- round(vol_p_fdr,3)
+
+#Add region names
+volNames <- as.data.frame(volRegions)
+vol_omnibus <- cbind(volNames,vol_p_fdr_round)
+
+#Trim table to only regions that passed FDR correction
+vol_omnibus_signif <- vol_omnibus[vol_p_fdr<0.05,]
+
+
+#Run same model with Hydra_k2_reordered to make S2 the comparison group in order to see S1 vs S2 differences in the model. This model will provide estimates and p-values for S1-S2.
+
+
+volLm_reordered <- lapply(volRegions,function(x){
+  lm(substitute(i~age_2 +FEMALE_b + Hydra_k2_reordered + mri_info_deviceserialnumber_b,list(i = as.name(x))),data = subjData)
+})
+
+
+#Look at model summaries
+volLmSumm_reordered <- lapply(volLm_reordered, summary)
+
+
+##Pairwise comparisons
+#Pull uncorrected p-values
+vol_S1vsTd <- sapply(volLm, function(v) summary(v)$coefficients[4,4])
+vol_S2vsTd <- sapply(volLm, function(v) summary(v)$coefficients[5,4])
+vol_S1vsS2 <- sapply(volLm_reordered, function(v) summary(v)$coefficients[4,4])
+
+#Combine the pairwise p values
+vol_pairs <- cbind(vol_S1vsTd,vol_S2vsTd,vol_S1vsS2)
+
+#Convert to data frame
+vol_pairs <- as.data.frame(vol_pairs)
+
+#Add row names for ease of viewing
+rownames(vol_pairs) <- volRegions
+
+#Print original p-values to three decimal places
+vol_pairs_round <- round(vol_pairs,3)
+
+
+##FDR correction across the three pairwise group comparisons (S1vsTd, S2vsTd, and S1vsS2)
+#Create an empty table for the fdr results
+vol_fdrTable<-as.data.frame(matrix(nrow=68,ncol=3))
+colnames(vol_fdrTable)[1]<-"vol_S1vsTd_pfdr"
+colnames(vol_fdrTable)[2]<-"vol_S2vsTd_pfdr"
+colnames(vol_fdrTable)[3]<-"vol_S1vsS2_pfdr"
+
+#FDR correct across rows
+for(i in 1:nrow(vol_pairs)) {
+    row <- vol_pairs[i,]
+    vol_fdrTable[i,] <- p.adjust(vol_pairs[i,],method="fdr")
+}
+
+#Print fdr-corrected p-values to three decimal places
+vol_fdrTable_round <- round(vol_fdrTable,3)
+
+#Add region names
+vol_pairwise <- cbind(volNames,vol_fdrTable_round)
+
+#Trim table to only regions that passed FDR correction for the omnibus test
+vol_pairwise_signif <- vol_pairwise[vol_p_fdr<0.05,]
+
+
+```
+Create Tables - Vol 2
+```{r}
+
+# Specify file and sheet names
+sheet_name <- "Cortical_2"         
+num_models <- length(volLm)
+anova_model = volAnova
+model = volLm
+modelSumm = volLmSumm
+model_reordered = volLm_reordered
+modelSumm_reordered = volLmSumm_reordered
+pairwise_p = vol_fdrTable_round
+rnames = volRegions
+var = 4 # var = number of variables included in lm model (age, female, bifactors, & site/scanner)
+
+# ANOVA
+Lm_F <- lapply(anova_model, function(x) {(x$`F value`[3])})
+Lm_p <- lapply(anova_model, function(x) {(x$`Pr(>F)`[3])})
+
+
+## Confidence intevals
+Lm_rsq_CI <- lapply(modelSumm, function(x) {CI.Rsq(x$r.squared,n,var,.95)})
+
+#Estimate Se T p 
+S1Td_stats <- lapply(model, function(v) summary(v)$coefficients[4,])
+S2Td_stats <- lapply(model, function(v) summary(v)$coefficients[5,])
+S1S2_stats <- lapply(model_reordered, function(v) summary(v)$coefficients[4,])
+
+
+
+df <- data.frame(F_statistic = numeric(num_models),
+                 Anova_p = numeric(num_models), 
+                 #T1
+                 Est_T1 = numeric(num_models), 
+                 SE_T1 = numeric(num_models), 
+                 t_T1 = numeric(num_models), 
+                 p_T1 = numeric(num_models), 
+                 #T2
+                 Est_T2 = numeric(num_models), 
+                 SE_T2 = numeric(num_models), 
+                 t_T2 = numeric(num_models), 
+                 p_T2 = numeric(num_models),
+                 #12
+                 Est_12 = numeric(num_models), 
+                 SE_12 = numeric(num_models), 
+                 t_12 = numeric(num_models), 
+                 p_12 = numeric(num_models),
+                 R_squared = numeric(num_models), 
+                 LCL = numeric(num_models), 
+                 UCL = numeric(num_models))
+
+#Standardize betas
+stBeta = lapply(model, function(x) {(lm.beta(x))})
+stBeta_reordered = lapply(model_reordered, function(x) {(lm.beta(x))})
+
+for (i in 1:num_models) {
+  df[i, "Est_T1"] <- stBeta[[i]]$standardized.coefficients[4]
+  df[i, "Est_T2"] <- stBeta[[i]]$standardized.coefficients[5]
+  df[i, "Est_12"] <- stBeta_reordered[[i]]$standardized.coefficients[4]
+  df[i, "F_statistic"] <- Lm_F[[i]]
+  df[i, "Anova_p"] <- Lm_p[[i]]
+  df[i, "R_squared"] <- Lm_rsq_CI[[i]]$Rsq
+  df[i, "LCL"] <- Lm_rsq_CI[[i]]$LCL
+  df[i, "UCL"] <- Lm_rsq_CI[[i]]$UCL
+  #df[i, "Est_T1"] <- S1Td_stats[[i]][1]
+  df[i, "SE_T1"] <- S1Td_stats[[i]][2]
+  df[i, "t_T1"] <- S1Td_stats[[i]][3]
+  df[i, "p_T1"] <- NA
+  #df[i, "Est_T2"] <- S2Td_stats[[i]][1]
+  df[i, "SE_T2"] <- S2Td_stats[[i]][2]
+  df[i, "t_T2"] <- S2Td_stats[[i]][3]
+  df[i, "p_T2"] <- NA
+  #df[i, "Est_12"] <- S1S2_stats[[i]][1]
+  df[i, "SE_12"] <- S1S2_stats[[i]][2]
+  df[i, "t_12"] <- S1S2_stats[[i]][3]
+  df[i, "p_12"] <- NA
+}
+
+
+df['p_T1']<-  pairwise_p[1]
+df['p_T2']<-  pairwise_p[2]
+df['p_12']<-  pairwise_p[3]
+
+rownames(df)<- rnames
+
+
+# Add a new sheet to the workbook
+addWorksheet(wb, sheetName = sheet_name)
+
+# Write the data frame to the new sheet, including row index names
+writeData(wb, sheet = sheet_name, x= df,row.names = TRUE,col.names = TRUE)
+
+```
+
+
+Subcortical - Year 2
+```{r}
+# Clean up environment if desired
+rm(list=setdiff(ls(),c("subjData","n",'filename','wb')))
+
+
+svolRegions <- c("smri_vol_scs_crbcortexlh_2",	"smri_vol_scs_tplh_2",	"smri_vol_scs_caudatelh_2",	"smri_vol_scs_putamenlh_2",	"smri_vol_scs_pallidumlh_2",	"smri_vol_scs_bstem_2",	"smri_vol_scs_hpuslh_2",	"smri_vol_scs_amygdalalh_2",	"smri_vol_scs_aal_2",	"smri_vol_scs_vedclh_2",	"smri_vol_scs_crbcortexrh_2",	"smri_vol_scs_tprh_2",	"smri_vol_scs_caudaterh_2",	"smri_vol_scs_putamenrh_2",	"smri_vol_scs_pallidumrh_2",	"smri_vol_scs_hpusrh_2",	"smri_vol_scs_amygdalarh_2",	"smri_vol_scs_aar_2",	"smri_vol_scs_vedcrh_2")
+
+
+
+##Run models (all three groups included).
+#TD is the comparison group in Hydra_k2. This model will provide estimates and p-values for TD vs. S1 and TD vs. S2.
+svolLm <- lapply(svolRegions, function(x) {
+  lm(substitute(i ~ age_2 + FEMALE_b + Hydra_k2 + mri_info_deviceserialnumber_b, list(i = as.name(x))), data=subjData)
+})
+
+
+#Look at model summaries
+svolLmSumm <- lapply(svolLm, summary)
+
+##Pass the results to the anova() function to fit ANOVAs
+#These are your omnibus ANOVA tests (tells you if the three groups are significantly different)
+svolAnova <- lapply(svolLm, anova)
+
+#Pull the p-values
+svol_p <- sapply(svolAnova, function(v) v$"Pr(>F)"[3])
+
+#Convert to data frame
+svol_p <- as.data.frame(svol_p)
+
+#Add row names for ease of viewing
+rownames(svol_p) <- svolRegions
+
+#Print original p-values to three decimal places
+svol_p_round <- round(svol_p,3)
+
+
+
+##FDR correction across all omnibus anova tests
+#FDR correct p-values
+svol_p_fdr <- p.adjust(svol_p[,1],method="fdr")
+
+#Convert to data frame
+svol_p_fdr <- as.data.frame(svol_p_fdr)
+
+#Print fdr-corrected p-values to three decimal places
+svol_p_fdr_round <- round(svol_p_fdr,3)
+
+#Add region names
+svolNames <- as.data.frame(svolRegions)
+svol_omnibus <- cbind(svolNames,svol_p_fdr_round)
+
+#Trim table to only regions that passed FDR correction
+svol_omnibus_signif <- svol_omnibus[svol_p_fdr<0.05,]
+
+#Run same model with Hydra_k2_reordered to make S2 the comparison group in order to see S1 vs S2 differences in the model. This model will provide estimates and p-values for S1-S2.
+svolLm_reordered <- lapply(svolRegions, function(x) {
+ lm(substitute(i ~ age_2 + FEMALE_b + Hydra_k2_reordered + mri_info_deviceserialnumber_b, list(i = as.name(x))),data=subjData)})
+
+
+#Look at model summaries
+svolLmSumm_reordered <- lapply(svolLm_reordered, summary)
+
+
+##Pairwise comparisons
+#Pull uncorrected p-values
+svol_S1vsTd <- sapply(svolLm, function(v) summary(v)$coefficients[4,4])
+svol_S2vsTd <- sapply(svolLm, function(v) summary(v)$coefficients[5,4])
+svol_S1vsS2 <- sapply(svolLm_reordered, function(v) summary(v)$coefficients[4,4])
+
+
+#Combine the pairwise p values
+svol_pairs <- cbind(svol_S1vsTd,svol_S2vsTd,svol_S1vsS2)
+
+#Convert to data frame
+svol_pairs <- as.data.frame(svol_pairs)
+
+#Add row names for ease of viewing
+rownames(svol_pairs) <- svolRegions
+
+#Print original p-values to three decimal places
+svol_pairs_round <- round(svol_pairs,3)
+
+
+##FDR correction across the three pairwise group comparisons (S1vsTd, S2vsTd, and S1vsS2)
+#Create an empty table for the fdr results
+svol_fdrTable<-as.data.frame(matrix(nrow=19,ncol=3))
+colnames(svol_fdrTable)[1]<-"svol_S1vsTd_pfdr"
+colnames(svol_fdrTable)[2]<-"svol_S2vsTd_pfdr"
+colnames(svol_fdrTable)[3]<-"svol_S1vsS2_pfdr"
+
+#FDR correct across rows
+for(i in 1:nrow(svol_pairs)) {
+    row <- svol_pairs[i,]
+    svol_fdrTable[i,] <- p.adjust(svol_pairs[i,],method="fdr")
+}
+
+#Print fdr-corrected p-values to three decimal places
+svol_fdrTable_round <- round(svol_fdrTable,3)
+
+#Add region names
+svol_pairwise <- cbind(svolNames,svol_fdrTable_round)
+
+#Trim table to only regions that passed FDR correction for the omnibus test
+svol_pairwise_signif <- svol_pairwise[svol_p_fdr<0.05,]
+
+```
+Create Tables - subcortical 
+```{r}
+
+# Specify file and sheet names
+sheet_name <- "Subcortical_2"         
+num_models <- length(svolLm)
+anova_model = svolAnova
+model = svolLm
+modelSumm = svolLmSumm
+model_reordered = svolLm_reordered
+modelSumm_reordered = svolLmSumm_reordered
+pairwise_p = svol_fdrTable_round
+rnames = svolRegions
+var = 4 # var = number of variables included in lm model (age, female, bifactors, & site/scanner)
+
+# ANOVA
+Lm_F <- lapply(anova_model, function(x) {(x$`F value`[3])})
+Lm_p <- lapply(anova_model, function(x) {(x$`Pr(>F)`[3])})
+
+
+## Confidence intevals
+Lm_rsq_CI <- lapply(modelSumm, function(x) {CI.Rsq(x$r.squared,n,var,.95)})
+
+#Estimate Se T p 
+S1Td_stats <- lapply(model, function(v) summary(v)$coefficients[4,])
+S2Td_stats <- lapply(model, function(v) summary(v)$coefficients[5,])
+S1S2_stats <- lapply(model_reordered, function(v) summary(v)$coefficients[4,])
+
+
+
+df <- data.frame(F_statistic = numeric(num_models),
+                 Anova_p = numeric(num_models), 
+                 #T1
+                 Est_T1 = numeric(num_models), 
+                 SE_T1 = numeric(num_models), 
+                 t_T1 = numeric(num_models), 
+                 p_T1 = numeric(num_models), 
+                 #T2
+                 Est_T2 = numeric(num_models), 
+                 SE_T2 = numeric(num_models), 
+                 t_T2 = numeric(num_models), 
+                 p_T2 = numeric(num_models),
+                 #12
+                 Est_12 = numeric(num_models), 
+                 SE_12 = numeric(num_models), 
+                 t_12 = numeric(num_models), 
+                 p_12 = numeric(num_models),
+                 R_squared = numeric(num_models), 
+                 LCL = numeric(num_models), 
+                 UCL = numeric(num_models))
+
+#Standardize betas
+stBeta = lapply(model, function(x) {(lm.beta(x))})
+stBeta_reordered = lapply(model_reordered, function(x) {(lm.beta(x))})
+
+for (i in 1:num_models) {
+  df[i, "Est_T1"] <- stBeta[[i]]$standardized.coefficients[4]
+  df[i, "Est_T2"] <- stBeta[[i]]$standardized.coefficients[5]
+  df[i, "Est_12"] <- stBeta_reordered[[i]]$standardized.coefficients[4]
+
+  df[i, "F_statistic"] <- Lm_F[[i]]
+  df[i, "Anova_p"] <- Lm_p[[i]]
+  df[i, "R_squared"] <- Lm_rsq_CI[[i]]$Rsq
+  df[i, "LCL"] <- Lm_rsq_CI[[i]]$LCL
+  df[i, "UCL"] <- Lm_rsq_CI[[i]]$UCL
+  #df[i, "Est_T1"] <- S1Td_stats[[i]][1]
+  df[i, "SE_T1"] <- S1Td_stats[[i]][2]
+  df[i, "t_T1"] <- S1Td_stats[[i]][3]
+  df[i, "p_T1"] <- NA
+  #df[i, "Est_T2"] <- S2Td_stats[[i]][1]
+  df[i, "SE_T2"] <- S2Td_stats[[i]][2]
+  df[i, "t_T2"] <- S2Td_stats[[i]][3]
+  df[i, "p_T2"] <- NA
+  #df[i, "Est_12"] <- S1S2_stats[[i]][1]
+  df[i, "SE_12"] <- S1S2_stats[[i]][2]
+  df[i, "t_12"] <- S1S2_stats[[i]][3]
+  df[i, "p_12"] <- NA
+}
+
+
+df['p_T1']<-  pairwise_p[1]
+df['p_T2']<-  pairwise_p[2]
+df['p_12']<-  pairwise_p[3]
+
+rownames(df)<- rnames
+
+
+# Add a new sheet to the workbook
+addWorksheet(wb, sheetName = sheet_name)
+
+# Write the data frame to the new sheet, including row index names
+writeData(wb, sheet = sheet_name, x= df,row.names = TRUE,col.names = TRUE)
+
+```
+
+
+CT - Year 2
+```{r}
+# Clean up environment if desired 
+rm(list=setdiff(ls(),c("subjData","n",'filename','wb')))
+
+#Get variable names
+volRegions <- colnames(subjData[,which(colnames(subjData)=="smri_thick_cdk_banksstslh_2"):which(colnames(subjData)=="smri_thick_cdk_insularh_2")])
+
+
+volLm <- lapply(volRegions,function(x){
+  lm(substitute(i~age_2+FEMALE_b + Hydra_k2 + mri_info_deviceserialnumber_b,list(i = as.name(x))),data = subjData)
+})
+
+
+#Look at model summaries
+volLmSumm <- lapply(volLm, summary)
+
+##Pass the results to the anova() function to fit ANOVAs
+#These are your omnibus ANOVA tests (tells you if the three groups are significantly different)
+volAnova <- lapply(volLm, anova)
+
+#Pull the p-values
+vol_p <- sapply(volAnova, function(v) v$"Pr(>F)"[3])
+
+
+#Convert to data frame
+vol_p <- as.data.frame(vol_p)
+
+#Add row names for ease of viewing
+rownames(vol_p) <- volRegions
+
+#Print original p-values to three decimal places
+vol_p_round <- round(vol_p,3)
+
+
+##FDR correction across all omnibus anova tests
+#FDR correct p-values
+vol_p_fdr <- p.adjust(vol_p[,1],method="fdr")
+
+#Convert to data frame
+vol_p_fdr <- as.data.frame(vol_p_fdr)
+
+#Print fdr-corrected p-values to three decimal places
+vol_p_fdr_round <- round(vol_p_fdr,3)
+
+#Add region names
+volNames <- as.data.frame(volRegions)
+vol_omnibus <- cbind(volNames,vol_p_fdr_round)
+
+#Trim table to only regions that passed FDR correction
+vol_omnibus_signif <- vol_omnibus[vol_p_fdr<0.05,]
+
+
+#Run same model with Hydra_k2_reordered to make S2 the comparison group in order to see S1 vs S2 differences in the model. This model will provide estimates and p-values for S1-S2.
+
+volLm_reordered <- lapply(volRegions,function(x){
+  lm(substitute(i~age_2+FEMALE_b + Hydra_k2_reordered + mri_info_deviceserialnumber_b,list(i = as.name(x))),data = subjData)
+})
+
+
+#Look at model summaries
+volLmSumm_reordered <- lapply(volLm_reordered, summary)
+
+
+##Pairwise comparisons
+#Pull uncorrected p-values
+vol_S1vsTd <- sapply(volLm, function(v) summary(v)$coefficients[4,4])
+vol_S2vsTd <- sapply(volLm, function(v) summary(v)$coefficients[5,4])
+vol_S1vsS2 <- sapply(volLm_reordered, function(v) summary(v)$coefficients[4,4])
+
+#Combine the pairwise p values
+vol_pairs <- cbind(vol_S1vsTd,vol_S2vsTd,vol_S1vsS2)
+
+#Convert to data frame
+vol_pairs <- as.data.frame(vol_pairs)
+
+#Add row names for ease of viewing
+rownames(vol_pairs) <- volRegions
+
+#Print original p-values to three decimal places
+vol_pairs_round <- round(vol_pairs,3)
+
+
+##FDR correction across the three pairwise group comparisons (S1vsTd, S2vsTd, and S1vsS2)
+#Create an empty table for the fdr results
+vol_fdrTable<-as.data.frame(matrix(nrow=68,ncol=3))
+colnames(vol_fdrTable)[1]<-"vol_S1vsTd_pfdr"
+colnames(vol_fdrTable)[2]<-"vol_S2vsTd_pfdr"
+colnames(vol_fdrTable)[3]<-"vol_S1vsS2_pfdr"
+
+#FDR correct across rows
+for(i in 1:nrow(vol_pairs)) {
+    row <- vol_pairs[i,]
+    vol_fdrTable[i,] <- p.adjust(vol_pairs[i,],method="fdr")
+}
+
+#Print fdr-corrected p-values to three decimal places
+vol_fdrTable_round <- round(vol_fdrTable,3)
+
+#Add region names
+vol_pairwise <- cbind(volNames,vol_fdrTable_round)
+
+#Trim table to only regions that passed FDR correction for the omnibus test
+vol_pairwise_signif <- vol_pairwise[vol_p_fdr<0.05,]
+
+```
+Create Tables - CT 2
+```{r}
+
+# Specify file and sheet names
+sheet_name <- "CT_2"         
+num_models <- length(volLm)
+anova_model = volAnova
+model = volLm
+modelSumm = volLmSumm
+model_reordered = volLm_reordered
+modelSumm_reordered = volLmSumm_reordered
+pairwise_p = vol_fdrTable_round
+rnames = volRegions
+var = 4 # var = number of variables included in lm model (age, female, bifactors, & site/scanner)
+
+# ANOVA
+Lm_F <- lapply(anova_model, function(x) {(x$`F value`[3])})
+Lm_p <- lapply(anova_model, function(x) {(x$`Pr(>F)`[3])})
+
+
+## Confidence intevals
+Lm_rsq_CI <- lapply(modelSumm, function(x) {CI.Rsq(x$r.squared,n,var,.95)})
+
+#Estimate Se T p 
+S1Td_stats <- lapply(model, function(v) summary(v)$coefficients[4,])
+S2Td_stats <- lapply(model, function(v) summary(v)$coefficients[5,])
+S1S2_stats <- lapply(model_reordered, function(v) summary(v)$coefficients[4,])
+
+
+
+df <- data.frame(F_statistic = numeric(num_models),
+                 Anova_p = numeric(num_models), 
+                 #T1
+                 Est_T1 = numeric(num_models), 
+                 SE_T1 = numeric(num_models), 
+                 t_T1 = numeric(num_models), 
+                 p_T1 = numeric(num_models), 
+                 #T2
+                 Est_T2 = numeric(num_models), 
+                 SE_T2 = numeric(num_models), 
+                 t_T2 = numeric(num_models), 
+                 p_T2 = numeric(num_models),
+                 #12
+                 Est_12 = numeric(num_models), 
+                 SE_12 = numeric(num_models), 
+                 t_12 = numeric(num_models), 
+                 p_12 = numeric(num_models),
+                 R_squared = numeric(num_models), 
+                 LCL = numeric(num_models), 
+                 UCL = numeric(num_models))
+
+#Standardize betas
+stBeta = lapply(model, function(x) {(lm.beta(x))})
+stBeta_reordered = lapply(model_reordered, function(x) {(lm.beta(x))})
+
+for (i in 1:num_models) {
+  df[i, "Est_T1"] <- stBeta[[i]]$standardized.coefficients[4]
+  df[i, "Est_T2"] <- stBeta[[i]]$standardized.coefficients[5]
+  df[i, "Est_12"] <- stBeta_reordered[[i]]$standardized.coefficients[4]
+  df[i, "F_statistic"] <- Lm_F[[i]]
+  df[i, "Anova_p"] <- Lm_p[[i]]
+  df[i, "R_squared"] <- Lm_rsq_CI[[i]]$Rsq
+  df[i, "LCL"] <- Lm_rsq_CI[[i]]$LCL
+  df[i, "UCL"] <- Lm_rsq_CI[[i]]$UCL
+  #df[i, "Est_T1"] <- S1Td_stats[[i]][1]
+  df[i, "SE_T1"] <- S1Td_stats[[i]][2]
+  df[i, "t_T1"] <- S1Td_stats[[i]][3]
+  df[i, "p_T1"] <- NA
+  #df[i, "Est_T2"] <- S2Td_stats[[i]][1]
+  df[i, "SE_T2"] <- S2Td_stats[[i]][2]
+  df[i, "t_T2"] <- S2Td_stats[[i]][3]
+  df[i, "p_T2"] <- NA
+  #df[i, "Est_12"] <- S1S2_stats[[i]][1]
+  df[i, "SE_12"] <- S1S2_stats[[i]][2]
+  df[i, "t_12"] <- S1S2_stats[[i]][3]
+  df[i, "p_12"] <- NA
+}
+
+
+df['p_T1']<-  pairwise_p[1]
+df['p_T2']<-  pairwise_p[2]
+df['p_12']<-  pairwise_p[3]
+
+rownames(df)<- rnames
+
+# Add a new sheet to the workbook
+addWorksheet(wb, sheetName = sheet_name)
+
+# Write the data frame to the new sheet, including row index names
+writeData(wb, sheet = sheet_name, x= df,row.names = TRUE,col.names = TRUE)
+
+```
+
+
+
+############################## COGNITIVE  YEAR 2 #################################
+
+Flanker 
+```{r}
+
+# Clean up environment if desired 
+rm(list=setdiff(ls(),c("subjData","n",'filename','wb','subjData_cog')))
+
+##Run model
+flankerLm <- lm(Flank_2 ~ age_2 + FEMALE_b + Hydra_k2 + mri_info_deviceserialnumber_b, data=subjData_cog)
+
+#Look at model summary
+flankerLmSumm <- summary(flankerLm)
+
+
+##Pass the results to the anova() function to fit ANOVAs
+#This is your omnibus ANOVA test (tells you if the three groups are significantly different)
+#df1=k-1, df2=n-k
+flankerAnova <- anova(flankerLm)
+
+
+##Run same model with Hydra_k2_reordered to make S2 the comparison group in order to see S1 vs S2 differences in the model.
+flankerLm_reordered <- lm(Flank_2 ~ age_2 + FEMALE_b + Hydra_k2_reordered + mri_info_deviceserialnumber_b, data=subjData_cog)
+
+#Look at model summary
+flankerLmSumm_reordered <- summary(flankerLm_reordered)
+
+
+##Pairwise comparisons
+#Pull uncorrected p-values
+flanker_S1vsTd <- summary(flankerLm)$coefficients[4,4]
+flanker_S2vsTd <- summary(flankerLm)$coefficients[5,4]
+flanker_S1vsS2 <- summary(flankerLm_reordered)$coefficients[4,4]
+
+#Combine the pairwise p values
+flanker_pairs <- cbind(flanker_S1vsTd,flanker_S2vsTd,flanker_S1vsS2)
+
+#Convert to data frame
+flanker_pairs <- as.data.frame(flanker_pairs)
+
+#Print original p-values to three decimal places
+flanker_pairs_round <- round(flanker_pairs,3)
+
+
+##FDR correction across the three pairwise group comparisons (S1vsTd, S2vsTd, and S1vsS2)
+flanker_fdr <- p.adjust(flanker_pairs[1,],method="fdr")
+
+#Print fdr-corrected p-values to three decimal places
+flanker_fdr_round <- round(flanker_fdr,3)
+
+
+```
+Create Tables - Flanker
+```{r}
+
+# Specify file and sheet names
+sheet_name <- "Flanker 2"         
+num_models <- 1
+anova_model = flankerAnova
+model = flankerLm 
+modelSumm = flankerLmSumm
+model_reordered = flankerLm_reordered
+modelSumm_reordered = flankerLmSumm_reordered
+pairwise_p = flanker_fdr_round
+rnames = 'flanker2'
+var = 4 # var = number of variables included in lm model (age, female, bifactors, & site/scanner)
+
+
+# ANOVA
+Lm_F <- anova_model$`F value`[3]
+Lm_p <- anova_model$`Pr(>F)`[3]
+
+## Confidence intevals
+Lm_rsq_CI <- CI.Rsq(modelSumm$r.squared,n,var,.95)
+
+
+#Estimate Se T p 
+S1Td_stats <- modelSumm$coefficients[4,]
+S2Td_stats <- modelSumm$coefficients[5,]
+S1S2_stats <- modelSumm_reordered$coefficients[4,]
+
+
+df <- data.frame(F_statistic = numeric(num_models),
+                 Anova_p = numeric(num_models), 
+                 #T1
+                 Est_T1 = numeric(num_models), 
+                 SE_T1 = numeric(num_models), 
+                 t_T1 = numeric(num_models), 
+                 p_T1 = numeric(num_models), 
+                 #T2
+                 Est_T2 = numeric(num_models), 
+                 SE_T2 = numeric(num_models), 
+                 t_T2 = numeric(num_models), 
+                 p_T2 = numeric(num_models),
+                 #12
+                 Est_12 = numeric(num_models), 
+                 SE_12 = numeric(num_models), 
+                 t_12 = numeric(num_models), 
+                 p_12 = numeric(num_models),
+                 R_squared = numeric(num_models), 
+                 LCL = numeric(num_models), 
+                 UCL = numeric(num_models))
+
+
+#Standardize betas
+stBeta = lm.beta(model)
+stBeta_reordered = lm.beta(model_reordered)
+
+for (i in 1:num_models) {
+  df[i, "Est_T1"] <- stBeta$standardized.coefficients[4]
+  df[i, "Est_T2"] <- stBeta$standardized.coefficients[5]
+  df[i, "Est_12"] <- stBeta_reordered$standardized.coefficients[4]
+  df[i, "F_statistic"] <- Lm_F
+  df[i, "Anova_p"] <- Lm_p
+  df[i, "R_squared"] <- Lm_rsq_CI$Rsq
+  df[i, "LCL"] <- Lm_rsq_CI$LCL
+  df[i, "UCL"] <- Lm_rsq_CI$UCL
+  #df[i, "Est_T1"] <- S1Td_stats[1]
+  df[i, "SE_T1"] <- S1Td_stats[2]
+  df[i, "t_T1"] <- S1Td_stats[3]
+  df[i, "p_T1"] <- pairwise_p[1]
+  #df[i, "Est_T2"] <- S2Td_stats[1]
+  df[i, "SE_T2"] <- S2Td_stats[2]
+  df[i, "t_T2"] <- S2Td_stats[3]
+  df[i, "p_T2"] <- pairwise_p[2]
+  #df[i, "Est_12"] <- S1S2_stats[1]
+  df[i, "SE_12"] <- S1S2_stats[2]
+  df[i, "t_12"] <- S1S2_stats[3]
+  df[i, "p_12"] <- pairwise_p[3]
+}
+
+
+
+rownames(df)<- rnames
+
+# Add a new sheet to the workbook
+addWorksheet(wb, sheetName = sheet_name)
+
+# Write the data frame to the new sheet, including row index names
+writeData(wb, sheet = sheet_name, x= df,row.names = TRUE,col.names = TRUE)
+
+```
+
+
+Pattern Accuracy
+```{r}
+# Clean up environment if desired 
+rm(list=setdiff(ls(),c("subjData","n",'filename','wb','subjData_cog')))
+
+##Run model
+patternLm <- lm(Patt_2 ~ age_2 + FEMALE_b + Hydra_k2 + mri_info_deviceserialnumber_b, data=subjData_cog)
+
+#Look at model summary
+patternLmSumm <- summary(patternLm)
+
+
+##Pass the results to the anova() function to fit ANOVAs
+#This is your omnibus ANOVA test (tells you if the three groups are significantly different)
+#df1=k-1, df2=n-k
+patternAnova <- anova(patternLm)
+
+
+##Run same model with Hydra_k2_reordered to make S2 the comparison group in order to see S1 vs S2 differences in the model.
+patternLm_reordered <- lm(Patt_2 ~ age_2 + FEMALE_b + Hydra_k2_reordered + mri_info_deviceserialnumber_b, data=subjData_cog)
+
+#Look at model summary
+patternLmSumm_reordered <- summary(patternLm_reordered)
+
+
+##Pairwise comparisons
+#Pull uncorrected p-values
+pattern_S1vsTd <- summary(patternLm)$coefficients[4,4]
+pattern_S2vsTd <- summary(patternLm)$coefficients[5,4]
+pattern_S1vsS2 <- summary(patternLm_reordered)$coefficients[4,4]
+
+#Combine the pairwise p values
+pattern_pairs <- cbind(pattern_S1vsTd,pattern_S2vsTd,pattern_S1vsS2)
+
+#Convert to data frame
+pattern_pairs <- as.data.frame(pattern_pairs)
+
+#Print original p-values to three decimal places
+pattern_pairs_round <- round(pattern_pairs,3)
+
+
+##FDR correction across the three pairwise group comparisons (S1vsTd, S2vsTd, and S1vsS2)
+pattern_fdr <- p.adjust(pattern_pairs[1,],method="fdr")
+
+#Print fdr-corrected p-values to three decimal places
+pattern_fdr_round <- round(pattern_fdr,3)
+
+
+```
+Create Tables - Pattern
+```{r}
+
+# Specify file and sheet names
+sheet_name <- "Pattern_Accuracy 2"         
+num_models <- 1
+anova_model = patternAnova
+model = patternLm 
+modelSumm = patternLmSumm
+model_reordered = patternLm_reordered
+modelSumm_reordered = patternLmSumm_reordered
+pairwise_p = pattern_fdr_round
+rnames = 'Pattern 2'
+var = 4 # var = number of variables included in lm model (age, female, bifactors, & site/scanner)
+
+
+# ANOVA
+Lm_F <- anova_model$`F value`[3]
+Lm_p <- anova_model$`Pr(>F)`[3]
+
+## Confidence intevals
+Lm_rsq_CI <- CI.Rsq(modelSumm$r.squared,n,var,.95)
+
+
+#Estimate Se T p 
+S1Td_stats <- modelSumm$coefficients[4,]
+S2Td_stats <- modelSumm$coefficients[5,]
+S1S2_stats <- modelSumm_reordered$coefficients[4,]
+
+
+df <- data.frame(F_statistic = numeric(num_models),
+                 Anova_p = numeric(num_models), 
+                 #T1
+                 Est_T1 = numeric(num_models), 
+                 SE_T1 = numeric(num_models), 
+                 t_T1 = numeric(num_models), 
+                 p_T1 = numeric(num_models), 
+                 #T2
+                 Est_T2 = numeric(num_models), 
+                 SE_T2 = numeric(num_models), 
+                 t_T2 = numeric(num_models), 
+                 p_T2 = numeric(num_models),
+                 #12
+                 Est_12 = numeric(num_models), 
+                 SE_12 = numeric(num_models), 
+                 t_12 = numeric(num_models), 
+                 p_12 = numeric(num_models),
+                 R_squared = numeric(num_models), 
+                 LCL = numeric(num_models), 
+                 UCL = numeric(num_models))
+
+
+#Standardize betas
+stBeta = lm.beta(model)
+stBeta_reordered = lm.beta(model_reordered)
+  
+
+for (i in 1:num_models) {
+  df[i, "Est_T1"] <- stBeta$standardized.coefficients[4]
+  df[i, "Est_T2"] <- stBeta$standardized.coefficients[5]
+  df[i, "Est_12"] <- stBeta_reordered$standardized.coefficients[4]
+  df[i, "F_statistic"] <- Lm_F
+  df[i, "Anova_p"] <- Lm_p
+  df[i, "R_squared"] <- Lm_rsq_CI$Rsq
+  df[i, "LCL"] <- Lm_rsq_CI$LCL
+  df[i, "UCL"] <- Lm_rsq_CI$UCL
+  #df[i, "Est_T1"] <- S1Td_stats[1]
+  df[i, "SE_T1"] <- S1Td_stats[2]
+  df[i, "t_T1"] <- S1Td_stats[3]
+  #df[i, "p_T1"] <- S1Td_stats[[i]][4]
+  df[i, "p_T1"] <- pairwise_p[1]
+  #df[i, "Est_T2"] <- S2Td_stats[1]
+  df[i, "SE_T2"] <- S2Td_stats[2]
+  df[i, "t_T2"] <- S2Td_stats[3]
+  df[i, "p_T2"] <- pairwise_p[2]
+  #df[i, "Est_12"] <- S1S2_stats[1]
+  df[i, "SE_12"] <- S1S2_stats[2]
+  df[i, "t_12"] <- S1S2_stats[3]
+  df[i, "p_12"] <- pairwise_p[3]
+}
+
+
+rownames(df)<- rnames
+
+# Add a new sheet to the workbook
+addWorksheet(wb, sheetName = sheet_name)
+
+# Write the data frame to the new sheet, including row index names
+writeData(wb, sheet = sheet_name, x= df,row.names = TRUE,col.names = TRUE)
+
+
+```
+
+
+Save
+
+```{r}
+# Save the workbook to the Excel file
+saveWorkbook(wb, filename)
+
+```
+
+
+
+
